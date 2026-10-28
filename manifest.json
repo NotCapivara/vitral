@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Nova Guia Soberana",
   "version": "1.0.0",
-  "description": "Nova guia 100% local e personalizável. Sem rastreamento, sem servidores, sem telemetria.",
+  "description": "Nova guia limpa e personalizável. Sem rastreamento nem telemetria; os dados de fora (notícias, cotações) só vêm do que você ativar.",
   "chrome_url_overrides": {
     "newtab": "newtab.html"
   },

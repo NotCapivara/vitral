@@ -1666,19 +1666,43 @@ const MARKET_RANGES = { '1d': ['1d', '5m', 'Dia'], '5d': ['5d', '30m', 'Semana']
 const YF = 'https://query1.finance.yahoo.com';
 
 // rótulo curto para o círculo do ativo
+// símbolo de cada ativo: ícone de traço fino (monocromático, na cor do texto) para o tipo de ativo,
+// o símbolo da moeda, ou o código da ação quando o código é a melhor identificação
+const MK_ICONS = {
+  index: '<path d="M3 17l5-5 4 3 8-8"/><path d="M15 7h5v5"/>',
+  up: '<path d="M7 17 17 7"/><path d="M9 7h8v8"/>',
+  down: '<path d="M7 7l10 10"/><path d="M17 9v8H9"/>',
+  bank: '<path d="M3 9.5 12 4l9 5.5"/><path d="M5 10v8M9.7 10v8M14.3 10v8M19 10v8"/><path d="M3 20h18"/>',
+  percent: '<path d="M19 5 5 19"/><circle cx="7" cy="7" r="2.3"/><circle cx="17" cy="17" r="2.3"/>',
+  cart: '<path d="M3 4h2.5l2 11h10.5l2-8H7"/><circle cx="9.5" cy="19" r="1.4"/><circle cx="17" cy="19" r="1.4"/>',
+  building: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 7h2M13 7h2M9 11h2M13 11h2M9 15h2M13 15h2"/>',
+  layers: '<path d="m12 3 9 5-9 5-9-5 9-5z"/><path d="m3 13 9 5 9-5"/>',
+  bar: '<path d="M3.5 19h7.5l-1.6-5H5.1l-1.6 5zM13 19h7.5l-1.6-5h-4.3L13 19zM8.3 11.5h7.4L14.1 6.5H9.9l-1.6 5z"/>', // lingotes
+  drop: '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>',
+  leaf: '<path d="M5 19c0-8 5-13 14-14 0 9-5 14-13 14"/><path d="M5 19 13 11"/>',
+  btc: '<path d="M8 5v14M8 5h5.5a3.5 3.5 0 0 1 0 7H8M8 12h6.5a3.5 3.5 0 0 1 0 7H8M10 3v2M13 3v2M10 19v2M13 19v2"/>',
+  eth: '<path d="m12 3-6 9.5 6 3.5 6-3.5L12 3z"/><path d="m6 14.5 6 6.5 6-6.5-6 3.5-6-3.5z"/>',
+  coin: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4.5"/>'
+};
+const CURRENCY_SIGN = { USD: '$', EUR: '€', GBP: '£', JPY: '¥', CNY: '¥', CHF: '₣', CAD: '$', ARS: '$' };
 function marketBadge(sym) {
-  if (sym.startsWith('@bcb:')) return { 432: 'SEL', 4389: 'CDI', 13522: 'IPCA' }[sym.slice(5)] || 'BC';
-  if (/^@(top|bottom):/.test(sym)) return (sym.startsWith('@top') ? '▲' : '▼') + ({ CRYPTO: '₿' }[sym.split(':')[1]] || sym.split(':')[1]);
-  if (/^BRL=X$|^USDBRL/.test(sym)) return 'US$';
-  if (/^EUR/.test(sym)) return '€';
-  if (/^GBP/.test(sym)) return '£';
-  if (/^BTC/.test(sym)) return '₿';
-  if (/^ETH/.test(sym)) return 'Ξ';
-  if (sym === '^BVSP') return 'IBOV';
-  if (/^GC=F/.test(sym)) return 'Au';
-  return sym.replace(/^\^/, '').replace(/[.=-].*$/, '').slice(0, 4);
-}
-const marketKind = (sym, type = '', name = '') =>
+  const ic = name => { const s = h('span', { class: 'mk-ic' }); s.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${MK_ICONS[name]}</svg>`; return s; };
+  const txt = (s, cls = '') => h('span', { class: 'mk-txt ' + cls }, s);
+  if (sym.startsWith('@bcb:')) return ic({ 432: 'bank', 4389: 'percent', 13522: 'cart' }[sym.slice(5)] || 'percent');
+  if (/^@(top|bottom):/.test(sym)) return ic(sym.startsWith('@top') ? 'up' : 'down');
+  const fx = sym.match(/^([A-Z]{3})(BRL)?=X$/);
+  if (fx) return txt(CURRENCY_SIGN[sym === 'BRL=X' ? 'USD' : fx[1]] || fx[1], 'sign');
+  if (/^BTC-/.test(sym)) return ic('btc');
+  if (/^ETH-/.test(sym)) return ic('eth');
+  if (marketKind(sym) === 'Cripto') return txt(sym.split('-')[0].slice(0, 3));
+  if (sym.startsWith('^')) return ic('index');
+  if (/^(GC|SI)=F/.test(sym)) return ic('bar');
+  if (/^(CL|BZ|NG)=F/.test(sym)) return ic('drop');
+  if (/=F$/.test(sym)) return ic('leaf');
+  // ações e fundos: o código (PETR, VALE, AAPL) diz mais que qualquer ícone
+  const code = sym.replace(/[.=-].*$/, '');
+  return txt(code.replace(/\d+$/, '').slice(0, 4) || code.slice(0, 4), code.length > 3 ? 'small' : '');
+}const marketKind = (sym, type = '', name = '') =>
   sym.startsWith('@bcb:') ? 'Taxa' : /^@(top|bottom):/.test(sym) ? 'Destaque do dia'
   : /=X$/.test(sym) || type === 'CURRENCY' ? 'Moeda'
   : type === 'CRYPTOCURRENCY' || /^(BTC|ETH|SOL|XRP|ADA|DOGE|LTC|BNB)-/.test(sym) ? 'Cripto'
@@ -1951,6 +1975,16 @@ function sparkline(points, up) {
   return s;
 }
 const f2 = v => v.toFixed(2);
+// destaque do dia numa linha só, igual aos outros nomes: "PRIO3 · BR" (a seta do símbolo já diz
+// se é alta ou baixa); o nome completo da empresa fica na dica ao passar o mouse
+function moverLabel(s, q) {
+  const m = s.match(/^@(top|bottom):(\w+)$/);
+  if (!m || !q || !q.label) return null;
+  const [code, company] = q.label.split(' · ');
+  const kind = m[1] === 'top' ? 'alta' : 'baixa', where = MOVER_NAMES[m[2]] || m[2];
+  return h('span', { class: 'lbl', title: `Maior ${kind} do dia · ${where}: ${code}${company ? ' (' + company + ')' : ''}` },
+    `${code} · ${{ CRYPTO: 'cripto' }[m[2]] || m[2]}`);
+}
 function paintMarket(card, data) {
   const mk = cfg.market;
   const seg = h('div', { class: 'news-chips market-range' }, Object.entries(MARKET_RANGES).map(([k, [, , label]]) =>
@@ -1986,7 +2020,8 @@ function paintMarket(card, data) {
     }
     return h('div', { class: 'mk-row' + (isRate(s) ? ' fixed' : '') + tick, title: s },
       h('span', { class: 'mk-badge' }, marketBadge(s)),
-      h('div', { class: 'mk-name' }, h('span', { class: 'lbl' }, name || (q && q.name) || s), h('span', { class: 'sub' }, q && q.label ? q.label : isSpecial(s) ? marketKind(s) : s.replace(/\.SA$/, ''))),
+      // só o nome, numa linha; nos destaques do dia, o código da ação que foi a maior alta/baixa
+      h('div', { class: 'mk-name' }, moverLabel(s, q) || h('span', { class: 'lbl' }, name || (q && q.name) || s)),
       mk.spark ? sparkline(q && q.points, q && q.rate ? q.price >= q.base : up) : null,
       h('div', { class: 'mk-price' }, h('span', {}, !q ? (data && data.loading ? '…' : '—') : q.rate ? q.price.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '% ' + q.unit : fmtPrice(q.price, q.currency, q.sym || s)),
         q && q.rate ? rateChange(q) : ch != null ? h('span', { class: 'mk-ch ' + (up ? 'up' : 'down') }, (up ? '▲ ' : '▼ ') + Math.abs(ch).toLocaleString('pt-BR', { maximumFractionDigits: 2, minimumFractionDigits: 2 }) + '%') : null));

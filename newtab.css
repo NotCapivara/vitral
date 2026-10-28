@@ -972,3 +972,21 @@ dialog.closing::backdrop { animation: backdrop-out .22s ease-in both; }
 .spark { width: 100%; max-width: 84px; height: auto; }
 .spark svg { width: 100%; height: auto; aspect-ratio: 84 / 28; }
 .spark.empty { width: 100%; }
+/* Símbolos do Mercado: círculo de vidro com ícone de traço fino, sinal da moeda ou código da ação */
+.mk-badge {
+  background: linear-gradient(180deg, rgba(255, 255, 255, .13), rgba(255, 255, 255, .045));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), inset 0 0 0 1px rgba(255, 255, 255, .05);
+  color: color-mix(in srgb, var(--text) 88%, transparent);
+}
+#panel .mk-badge, #asset-dialog .mk-badge { background: linear-gradient(180deg, rgba(255, 255, 255, .13), rgba(255, 255, 255, .045)); }
+.mk-ic { display: grid; width: 16px; height: 16px; }
+.mk-ic svg { width: 100%; height: 100%; }
+.mk-txt { font: 600 10.5px/1 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: .02em; }
+.mk-txt.small { font-size: 9px; letter-spacing: 0; }
+.mk-txt.sign { font: 500 16px/1 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: 0; }
+.mk-hint { color: var(--muted); font-weight: 400; font-size: .86em; margin-left: 4px; }
+
+/* Tudo no Mercado na mesma fonte do resto da página (a escolhida em Aparência):
+   o complemento do destaque só muda a cor; os códigos e sinais dos símbolos também seguem a fonte */
+.mk-hint { font: inherit; color: var(--muted); margin-left: 5px; }
+.mk-badge, .mk-txt, .mk-txt.small, .mk-txt.sign { font-family: var(--font); }

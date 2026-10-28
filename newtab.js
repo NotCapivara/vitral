@@ -211,7 +211,9 @@ function save() {
 
 // ---------- Tema e fundo ----------
 function hexToRgba(hex, alpha) {
-  const n = parseInt(hex.replace('#', ''), 16);
+  let x = String(hex || '#ffffff').replace('#', '');
+  if (x.length === 3) x = x.replace(/./g, c => c + c);
+  const n = parseInt(x, 16) || 0;
   return `rgba(${n >> 16 & 255}, ${n >> 8 & 255}, ${n & 255}, ${alpha})`;
 }
 
@@ -250,28 +252,29 @@ async function applyTheme() {
 }
 
 let bgChosen = null; // mantém a mesma imagem durante a sessão da aba
+let bgApplied = '';
 async function applyBackground() {
   const b = cfg.bg, bg = $('#bg');
-  bg.style.background = '';
   bg.style.filter = b.blurPx ? `blur(${b.blurPx}px)` : '';
   $('#dim').style.background = `rgba(0,0,0,${b.dim / 100})`;
+  const paint = css => { if (css !== bgApplied) { bg.style.background = css; bgApplied = css; } };
 
-  if (b.type === 'solid') bg.style.background = b.color;
+  if (b.type === 'solid') paint(b.color);
   else if (b.type === 'gradient') {
     const stops = [b.g1, b.g2, b.g3].filter(Boolean).join(', ');
-    bg.style.background = `linear-gradient(${b.angle}deg, ${stops})`;
+    paint(`linear-gradient(${b.angle}deg, ${stops})`);
   } else if (b.type === 'image') {
     const uploaded = (await store.get('images')) || [];
     const urls = b.imageUrls.split('\n').map(s => s.trim()).filter(Boolean);
     const pool = [...uploaded, ...urls];
-    if (!pool.length) { bg.style.background = b.color; return; }
+    if (!pool.length) { paint(b.color); return; }
     let idx;
     if (b.rotate === 'first') idx = 0;
     else if (b.rotate === 'daily') idx = dayIndex() % pool.length;
     else idx = bgChosen != null && bgChosen < pool.length ? bgChosen : Math.floor(Math.random() * pool.length);
     bgChosen = idx;
     const src = String(pool[idx]).replace(/["\\\n]/g, c => encodeURIComponent(c));
-    bg.style.background = `${b.color} url("${src}") center / cover no-repeat`;
+    paint(`${b.color} url("${src}") center / cover no-repeat`);
   }
 }
 
@@ -382,7 +385,7 @@ const renderers = {
     let dragFrom = null;
     cfg.shortcuts.forEach((sc, i) => {
       const tile = h('div', { class: 'tile' });
-      if (sc.icon && /^(https?:|data:)/.test(sc.icon)) tile.append(h('img', { src: sc.icon, alt: '' }));
+      if (sc.icon && /^(https?:|data:|icons\/)/.test(sc.icon)) tile.append(h('img', { src: sc.icon, alt: '' }));
       else if (sc.icon) tile.textContent = sc.icon;
       else if (cfg.theme.iconStyle === 'favicon' && hasChrome) {
         const img = h('img', { alt: '', src: `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(sc.url)}&size=64` });
@@ -493,87 +496,59 @@ function render() {
   fitSoon();
 }
 
-// Tudo numa tela só: a página não rola, então tira as notícias mais antigas até o conteúdo caber.
-// ("Quantidade" vira o máximo; numa tela menor aparecem menos.)
+// Tudo numa tela só: a página não rola. As notícias que aparecem são as que cabem no espaço,
+// em rodízio entre as fontes (ver abaixo); o resto da página se compacta se precisar.
 function fitToScreen() {
   const app = $('#app'), card = $('.card.news'), list = card && card.querySelector('.news-list');
   if (!app) return;
   app.style.setProperty('--fit-zoom', 1);
-  // a página inteira encolhe um pouco (até 70%) quando mesmo assim não cabe
-  const shrink = () => { for (let z = 95; z >= 70 && app.scrollHeight > app.clientHeight + 1; z -= 5) app.style.setProperty('--fit-zoom', z / 100); };
-  // o Mercado também se compacta (linhas mais juntas) antes de a página encolher
   const market = $('.card.market');
   if (market) market.dataset.fit = 0;
-  const compactMarket = () => { if (market) for (let lv = 1; lv <= 2 && app.scrollHeight > app.clientHeight + 1; lv++) market.dataset.fit = lv; };
-  if (!list) { compactMarket(); return shrink(); }
-  const all = [...list.children], spares = all.filter(i => i.hasAttribute('data-spare')), items = all.filter(i => !i.hasAttribute('data-spare'));
-  items.forEach(i => { i.hidden = false; });
-  spares.forEach(i => { i.hidden = true; });
-  // preenche o espaço que sobrar com as notícias de reserva, na ordem, enquanto couberem
-  const fill = () => {
-    for (const i of spares) {
-      const before = height(), fitted = !over();
-      i.hidden = false;
-      if (height() > before || (fitted && over()) || card.scrollHeight > card.clientHeight + 1) { i.hidden = true; break; }
-    }
+  const overScreen = () => app.scrollHeight > app.clientHeight + 1;
+  // o resto da página (sem notícias) precisa caber: o Mercado se compacta e, se ainda faltar,
+  // a página inteira encolhe um pouco (até 70%)
+  const fitBase = () => {
+    if (market) for (let lv = 1; lv <= 2 && overScreen(); lv++) market.dataset.fit = lv;
+    for (let z = 95; z >= 70 && overScreen(); z -= 5) app.style.setProperty('--fit-zoom', z / 100);
   };
-  card.dataset.fit = 0;
-  // altura travada (troca de fonte): o que não couber no bloco sai, como se fosse a tela
+  if (!list) return fitBase();
+
+  // Ordem justa (rodízio): primeiro a notícia mais nova de cada fonte, depois a 2ª de cada uma,
+  // e assim por diante. Assim toda fonte ganha o mesmo espaço; a sobra vai para as mais novas.
+  const all = [...list.children];
+  const order = all.slice().sort((a, b) => (+a.dataset.rank || 0) - (+b.dataset.rank || 0) || (+b.dataset.date || 0) - (+a.dataset.date || 0));
+  const sources = new Set(all.map(i => i.dataset.src)).size;
   card.style.height = card.dataset.lockH ? card.dataset.lockH + 'px' : '';
-  const height = () => app.scrollHeight;
-  const over = () => app.scrollHeight > app.clientHeight + 1 || (card.dataset.lockH && card.scrollHeight > card.clientHeight + 1);
-  if (!over()) return fill();
-  // Cada passo só vale se de fato diminuir a página. Quando quem estica a linha é outro bloco
-  // (ex.: um Mercado comprido ao lado), tirar notícias não adianta nada e só deixaria o bloco
-  // vazio: nesse caso o passo é desfeito e as notícias ficam.
-  const helps = (apply, undo) => {
-    const before = height(), lockOver = card.dataset.lockH && card.scrollHeight > card.clientHeight + 1;
-    apply();
-    const lockNow = card.dataset.lockH && card.scrollHeight > card.clientHeight + 1;
-    if (height() < before || (lockOver && !lockNow) || !over()) return true;
-    undo(); return false;
+  const show = k => order.forEach((i, n) => { i.hidden = n >= k; });
+
+  // sem notícias, a página cabe? (se nem assim, aceita o que não aumentar a página)
+  show(0); card.dataset.fit = 0;
+  fitBase();
+  const baseOver = overScreen(), baseHeight = app.scrollHeight;
+  const fits = () => !(card.dataset.lockH && card.scrollHeight > card.clientHeight + 1)
+    && (baseOver ? app.scrollHeight <= baseHeight : !overScreen());
+  // quantas notícias cabem num nível de compactação (busca binária: mais notícias = mais altura)
+  const most = level => {
+    card.dataset.fit = level;
+    let lo = 0, hi = order.length;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; show(mid); if (fits()) lo = mid; else hi = mid - 1; }
+    return lo;
   };
-  // ordem de saída: maior posição na fonte primeiro (as "extras"); entre iguais, a mais antiga
-  const order = items.slice().sort((a, b) => (+b.dataset.rank || 0) - (+a.dataset.rank || 0) || (+a.dataset.date || 0) - (+b.dataset.date || 0));
-  const extras = order.filter(i => +i.dataset.rank > 0), firsts = order.filter(i => !(+i.dataset.rank > 0));
-  const removed = [];
-  const drop = i => helps(() => { i.hidden = true; }, () => { i.hidden = false; }) && removed.push(i);
-  // 1) tira as notícias extras (2ª, 3ª… de uma mesma fonte)
-  for (const i of extras) { if (!over()) break; drop(i); }
-  // 2) compacta: resumo com 3, 2, 1 linha; sem resumo e imagem menor; sem imagem
-  for (let level = 1; level <= 5 && over(); level++) {
-    const prev = card.dataset.fit;
-    if (!helps(() => { card.dataset.fit = level; }, () => { card.dataset.fit = prev; })) break;
+  // Escolhe o nível de compactação que preenche melhor o bloco:
+  // - até o nível 3 (resumo de 1 linha), vale encurtar o resumo para caber mais notícias
+  //   (uma linha inteira a mais em vez de um vão vazio embaixo); empate fica com o resumo maior;
+  // - os níveis 4 e 5 (sem resumo, sem imagem) só entram se nem assim couber uma de cada fonte.
+  const need = Math.min(sources, order.length);
+  let best = null;
+  for (let level = 0; level <= 5; level++) {
+    if (level > 3 && best && best.k >= need) break;
+    const k = most(level);
+    if (!best || k > best.k) best = { level, k };
   }
-  // 3) último recurso: some a notícia mais antiga entre as primeiras de cada fonte
-  for (let k = 0; k < firsts.length - 1 && over(); k++) drop(firsts[k]);
-  compactMarket();
-  shrink();
-  // 4) sobrou espaço no bloco (ele ficou da altura do vizinho)? primeiro desfaz a compactação
-  // (resumos voltam), depois devolve notícias até preencher
-  for (let lv = +card.dataset.fit - 1; lv >= 0; lv--) {
-    const before = height(), fitted = !over(), prev = card.dataset.fit;
-    card.dataset.fit = lv;
-    if (height() > before || (fitted && over()) || card.scrollHeight > card.clientHeight + 1) { card.dataset.fit = prev; break; }
-  }
-  for (const i of removed.reverse()) {
-    const before = height(), fitted = !over();
-    i.hidden = false;
-    if (height() > before || (fitted && over()) || card.scrollHeight > card.clientHeight + 1) { i.hidden = true; return; }
-  }
-  if (!removed.length) fill();
-  // 5) ainda sobra um vão menor que uma notícia? tenta encaixar mais uma resumindo um pouco mais
-  //    (até resumo de 1 linha); se nem assim couber, deixa como estava
-  for (const i of [...removed, ...spares].filter(x => x.hidden)) {
-    const before = height(), fitted = !over(), prev = +card.dataset.fit;
-    i.hidden = false;
-    const bad = () => height() > before || (fitted && over()) || card.scrollHeight > card.clientHeight + 1;
-    let lv = prev;
-    while (bad() && lv < 3) card.dataset.fit = ++lv;
-    if (bad()) { i.hidden = true; card.dataset.fit = prev; break; }
-  }
-  if (over()) shrink(); // o que voltou para preencher não pode fazer a página passar da tela
-}let fitTimer;
+  card.dataset.fit = best.level;
+  show(Math.max(1, best.k));
+}
+let fitTimer;
 const fitSoon = () => { cancelAnimationFrame(fitTimer); fitTimer = requestAnimationFrame(fitToScreen); };
 addEventListener('resize', () => { const c = $('.card.news'); if (c) delete c.dataset.lockH; fitSoon(); });
 
@@ -1303,7 +1278,8 @@ const allIcon = () => { const i = icon('layout'); i.classList.add('src-ic', 'all
 function fitChips(chips, key) {
   chips.prepend(h('span', { class: 'chip-pill' }));
   const fit = () => {
-    if (!chips.isConnected || !chips.clientWidth) return;
+    if (!chips.isConnected) { observer.disconnect(); return; }
+    if (!chips.clientWidth) return;
     chips.classList.remove('overflow');
     const over = () => chips.scrollWidth > chips.clientWidth + 1;
     let level = 0;
@@ -1370,7 +1346,8 @@ function fitChips(chips, key) {
     e.preventDefault();
     chips.scrollBy({ left: e.deltaY, behavior: 'smooth' });
   }, { passive: false });
-  new ResizeObserver(fit).observe(chips);
+  const observer = new ResizeObserver(fit);
+  observer.observe(chips);
   requestAnimationFrame(fit);
 }
 
@@ -1391,6 +1368,30 @@ function watchImage(img) {
     if (img.dataset.waited) { delete img.dataset.waited; setTimeout(check, 12000); return; }
     if (!img.complete || !img.naturalWidth) drop();
   }, 12000);
+}
+// Manchete GRITADA (toda em maiúsculas) vira texto normal: primeira letra de cada frase em
+// maiúscula e siglas conhecidas preservadas (STF, PT, EUA, IOF…). Texto normal não muda.
+const KEEP_CAPS = new Set(('STF STJ TSE TST TCU STM PF PRF PM PGR AGU MPF MP CPI CPMI PEC PL PT PSDB MDB PSOL PSD PP PDT PSB PCDOB PCO ' +
+  'EUA ONU OTAN UE OMS OEA FMI BC BCE FED IOF INSS SUS IR IPCA CDI PIB SELIC CVM B3 BNDES ANS ANVISA IBGE ENEM USP UFRJ UNICAMP ' +
+  'CNN BBC TV ONG FBI CIA PCC CV LGBT CEO XP IA AI AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO').split(' '));
+function calmCaps(text) {
+  if (!text) return text;
+  // frase por frase: um resumo pode ter só um trecho gritado no meio de texto normal
+  return text.replace(/[^.!?…]+[.!?…]*\s*/g, calmSentence);
+}
+function calmSentence(text) {
+  const letters = text.replace(/[^A-Za-zÀ-ÿ]/g, '');
+  const upper = letters.replace(/[^A-ZÀ-Þ]/g, '').length;
+  if (letters.length < 8) return text;
+  // trecho gritado dentro de frase normal ("…no Instagram: "A TRAMA EXPOSTA EM SEUS DETALHES""):
+  // 4 ou mais palavras seguidas em maiúsculas viram minúsculas (siglas ficam)
+  if (upper / letters.length < .8) return text.replace(/(?:\b[\p{Lu}\d]{2,}\b[\s,;:"“”'?!-]*){4,}/gu,
+    run => run.replace(/[\p{Lu}\d]+/gu, w => KEEP_CAPS.has(w) ? w : w.toLocaleLowerCase('pt-BR')));
+  const out = text.toLocaleLowerCase('pt-BR')
+    .replace(/^(\s*["“'(]?\s*)(\p{L})/u, (m, pre, ch) => pre + ch.toLocaleUpperCase('pt-BR'));
+  // devolve as siglas: palavra que estava em maiúsculas e é uma sigla conhecida
+  const orig = text.split(/(\s+)/);
+  return out.split(/(\s+)/).map((w, n) => KEEP_CAPS.has((orig[n] || '').replace(/[^\p{L}\d]/gu, '')) ? orig[n] : w).join('');
 }
 let newsFilter = ''; // fonte escolhida nos filtros (só nesta guia)
 let newsSwitch = false; // a próxima pintura vem de uma troca de fonte (anima a lista)
@@ -1438,11 +1439,9 @@ function paintNews(card, data) {
   let body;
   if (data.loading && !data.items.length) body = h('div', { class: 'news-list' }, [1, 2, 3, 4].map(() => h('div', { class: 'news-skel' })));
   else {
-    // além da "Quantidade", vêm notícias de reserva (escondidas): se o bloco ficar mais alto que o
-    // necessário (ex.: da altura do Mercado ao lado), elas aparecem para preencher o espaço
-    const SPARE = 30;
-    const items = newsFilter ? data.items.filter(it => it.source === newsFilter).slice(0, n.count + SPARE) : balance(data.items, n.count + SPARE);
-    const spareFrom = Math.min(n.count, items.length);
+    // vêm notícias a mais do que cabem: fitToScreen mostra quantas couberem, em rodízio entre as fontes
+    const POOL = 42;
+    const items = newsFilter ? data.items.filter(it => it.source === newsFilter).slice(0, POOL) : balance(data.items, POOL);
     // cor do viés de cada fonte (calculada agora: a nota pode ter mudado depois de guardar as notícias)
     const biasBy = {}, iconBy = {};
     for (const s of newsSources()) { biasBy[s.name] = biasOf(s); iconBy[s.name] = s.icon; }
@@ -1453,11 +1452,11 @@ function paintNews(card, data) {
     body = items.length ? h('div', { class: 'news-list' }, items.map(it => {
       const b = n.showBias ? biasBy[it.source] : null;
       const showTr = it.tr && n.translate;
-      const title = showTr ? it.title : (it.orig ? it.orig.title : it.title);
-      const summary = showTr ? it.summary : (it.orig ? it.orig.summary : it.summary);
+      const title = calmCaps(showTr ? it.title : (it.orig ? it.orig.title : it.title));
+      const summary = calmCaps(showTr ? it.summary : (it.orig ? it.orig.summary : it.summary));
       const img = n.images && it.image ? h('img', { class: 'news-img', src: it.image, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : null;
       if (img) watchImage(img);
-      return h('a', { class: 'news-item', href: it.link, 'data-rank': rankOf.get(it), 'data-date': it.date || 0, 'data-spare': items.indexOf(it) >= spareFrom ? '' : null },
+      return h('a', { class: 'news-item', href: it.link, 'data-rank': rankOf.get(it), 'data-date': it.date || 0, 'data-src': it.source },
         h('div', { class: 'news-body' },
           h('div', { class: 'news-meta' }, srcIcon(it.site, iconBy[it.source]), h('span', {}, it.source),
             b != null ? h('span', { class: 'bias-pip', style: `--c:${BIAS[b].color}`, title: BIAS[b].label }) : null,
@@ -1479,10 +1478,12 @@ function paintNews(card, data) {
   fitSoon();
 }
 
-async function fillNews(card, force) {
+async function fillNews(card, force, quiet) {
   const srcs = newsSources();
   if (!srcs.length) return paintNews(card, null);
   const key = newsKey(srcs), cache = (await store.get('news')) || {};
+  // atualização automática: se ainda está dentro do tempo escolhido, não mexe em nada na tela
+  if (quiet && cache.v === NEWS_V && cache.key === key && Date.now() - (cache.at || 0) < cfg.news.refresh * 6e4) return;
   const shown = cache.key === key ? cache : { items: [] };
   paintNews(card, { ...shown, loading: true });
   let data = shown;
@@ -1618,7 +1619,6 @@ function newsSettings() {
     listWrap,
     ui.note('A nota de viés de cada veículo brasileiro é uma estimativa inicial feita pelo Claude a partir da linha editorial pública; toque nos pontos para dar a sua.'),
     ...ui.section('Exibição',
-      ui.slider('list', 'Quantidade', 'news.count', 4, 30, 1),
       ui.toggle('image', 'Imagens', 'news.images'),
       ui.toggle('text', 'Resumo', 'news.summary'),
       ui.toggle('globe', 'Traduzir notícias em inglês', 'news.translate', () => { if (cfg.news.translate) { const c = $('.card.news'); if (c) fillNews(c, true); } }),
@@ -1632,7 +1632,7 @@ function newsSettings() {
       ui.slider('calendar', 'Notícias de até (dias)', 'news.maxAge', 1, 30, 1),
       ui.toggle('sliders', 'Cor do viés nas notícias', 'news.showBias'),
       ui.segRow('reset', 'Atualizar', 'news.refresh', [[15, '15 min'], [30, '30 min'], [60, '1 h']])),
-    ui.note('A tradução usa o tradutor do navegador quando disponível; senão, o Google Tradutor (só título e resumo são enviados).')
+    ui.note('O bloco mostra quantas notícias couberem, divididas igualmente entre as fontes. A tradução usa o tradutor do navegador quando disponível; senão, o Google Tradutor (só título e resumo são enviados).')
   ];
 }
 
@@ -1762,7 +1762,8 @@ function marketBadge(sym) {
   // ações e fundos: o código (PETR, VALE, AAPL) diz mais que qualquer ícone
   const code = sym.replace(/[.=-].*$/, '');
   return txt(code.replace(/\d+$/, '').slice(0, 4) || code.slice(0, 4), code.length > 3 ? 'small' : '');
-}const marketKind = (sym, type = '', name = '') =>
+}
+const marketKind = (sym, type = '', name = '') =>
   sym.startsWith('@bcb:') ? 'Taxa' : /^@(top|bottom):/.test(sym) ? 'Destaque do dia'
   : /=X$/.test(sym) || type === 'CURRENCY' ? 'Moeda'
   : type === 'CRYPTOCURRENCY' || /^(BTC|ETH|SOL|XRP|ADA|DOGE|LTC|BNB)-/.test(sym) ? 'Cripto'
@@ -1932,18 +1933,23 @@ async function loadMarket(force) {
   if (!force && cache.key === key && age < mk.refresh * 6e4 && (complete || age < 6e4)) return cache; // incompleto: tenta de novo no máximo 1×/min
   if (marketJob) return marketJob;
   marketJob = (async () => {
+    // o guardado só vale se for do mesmo período (senão um gráfico do Dia apareceria em Ano)
+    const sameRange = String(cache.key || '').endsWith('@' + mk.range);
+    const prev = s => sameRange && cache.data && cache.data[s];
+    const stillFresh = s => !force && prev(s) && (prev(s).points || []).length >= 2 && Date.now() - (prev(s).at || 0) < mk.refresh * 6e4;
     // em fila, dois por vez: o Yahoo bloqueia por um tempo (erro 429) quem pede muito de uma vez
     const res = new Array(syms.length);
     let next = 0;
     await Promise.all([0, 1].map(async () => {
       while (next < syms.length) {
         const i = next++;
+        if (stillFresh(syms[i])) { res[i] = { status: 'fulfilled', value: prev(syms[i]) }; continue; }
         try { res[i] = { status: 'fulfilled', value: await fetchQuote(syms[i], mk.range) }; }
         catch (e) { res[i] = { status: 'rejected', reason: e }; }
       }
     }));
     const data = {};
-    res.forEach((r, i) => { data[syms[i]] = r.status === 'fulfilled' ? r.value : (cache.data && cache.data[syms[i]]) || null; });
+    res.forEach((r, i) => { data[syms[i]] = r.status === 'fulfilled' ? r.value : prev(syms[i]) || null; });
     // "sem cotação" só para quem não tem nem o último valor guardado
     const out = { key, at: Date.now(), data, failed: syms.filter((s, i) => res[i].status === 'rejected' && !data[s]) };
     await store.set('market', out);
@@ -1952,8 +1958,10 @@ async function loadMarket(force) {
   return marketJob;
 }
 
+const CENTS = { USX: 'USD', GBp: 'GBP', GBX: 'GBP', ZAc: 'ZAR', ILA: 'ILS' };
 const fmtPrice = (v, cur, sym) => {
   if (v == null || isNaN(v)) return '—';
+  if (CENTS[cur]) { v /= 100; cur = CENTS[cur]; }
   const digits = Math.abs(v) >= 1000 ? 0 : Math.abs(v) >= 10 ? 2 : Math.abs(v) >= 1 ? 2 : 4;
   if (sym.startsWith('^') || !cur) return v.toLocaleString('pt-BR', { maximumFractionDigits: digits });
   try { return v.toLocaleString('pt-BR', { style: 'currency', currency: cur, minimumFractionDigits: digits, maximumFractionDigits: digits }); }
@@ -2106,16 +2114,24 @@ function paintMarket(card, data) {
 }
 let marketSwitch = false; // a próxima pintura com dados vem de uma troca de período (anima a lista)
 const lastPrice = {}; // último preço mostrado de cada ativo, para piscar quando ele muda
-async function fillMarket(card, force) {
+async function fillMarket(card, force, quiet) {
   const cache = (await store.get('market')) || {};
+  // atualização automática: se ainda está fresco, não pisca o ícone de carregando à toa
+  const mk = cfg.market, key = mk.symbols.map(x => x.s).join('|') + '@' + mk.range;
+  const complete = mk.symbols.every(x => cache.data && cache.data[x.s] && (cache.data[x.s].points || []).length >= 2);
+  if (quiet && cache.key === key && complete && Date.now() - (cache.at || 0) < mk.refresh * 6e4) return;
   paintMarket(card, { ...cache, loading: true });
   let data = cache;
   try { data = await loadMarket(force); } catch {}
   const cur = card.isConnected ? card : $('.card.market');
   if (cur) paintMarket(cur, data);
 }
-// atualiza sozinho enquanto a guia estiver aberta
-setInterval(() => { const c = $('.card.market'); if (c && !document.hidden) fillMarket(c); }, 60000);
+// atualiza sozinho enquanto a guia estiver aberta (só busca de novo quando passa do tempo escolhido)
+setInterval(() => {
+  if (document.hidden) return;
+  const m = $('.card.market'); if (m) fillMarket(m, false, true);
+  const n = $('.card.news'); if (n && !n.dataset.lockH) fillNews(n, false, true);
+}, 60000);
 
 // catálogo de ativos por categoria (símbolos do Yahoo Finance; cripto também no CoinGecko)
 const MARKET_CATALOG = {
@@ -2145,7 +2161,7 @@ function openAssetPicker() {
     const paint = () => { r.classList.toggle('added', has(s)); state.replaceChildren(icon(has(s) ? 'check' : 'plus')); };
     r.addEventListener('click', () => {
       if (has(s)) mk.symbols.splice(mk.symbols.findIndex(x => x.s === s), 1); else mk.symbols.push({ s, name });
-      changed(); paint();
+      save(); paint(); // o bloco atualiza uma vez só, ao fechar a janela
     });
     paint();
     return r;
@@ -2279,7 +2295,14 @@ const set = (path, v) => {
   const keys = path.split('.'), last = keys.pop();
   keys.reduce((o, k) => o[k], cfg)[last] = v;
 };
-const changed = () => { save(); applyTheme(); render(); };
+// cada ajuste salva e redesenha, mas no máximo uma vez por quadro: arrastar um slider ou digitar
+// gerava dezenas de redesenhos completos por segundo (o bloco de notícias piscava e o slider travava)
+let changeFrame = 0;
+const changed = () => {
+  save();
+  if (changeFrame) return;
+  changeFrame = requestAnimationFrame(() => { changeFrame = 0; applyTheme(); render(); });
+};
 const refresh = () => openTab(currentTab);
 
 const ui = {

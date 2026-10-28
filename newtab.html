@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nova guia</title>
+  <link rel="icon" type="image/svg+xml" href="icons/tab.svg">
+  <link rel="stylesheet" href="newtab.css">
+  <style id="custom-css"></style>
+</head>
+<body>
+  <div id="bg"></div>
+  <div id="dim"></div>
+
+  <main id="app">
+    <section id="top" class="zone"></section>
+    <section id="center" class="zone"></section>
+    <section id="widgets" class="zone grid"></section>
+  </main>
+
+  <button id="open-settings" title="Configurações ( , )" aria-label="Configurações"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+
+  <!-- PAINEL DE CONFIGURAÇÕES -->
+  <aside id="panel" hidden>
+    <header>
+      <h2 id="panel-title">Aparência</h2>
+      <button id="close-settings" class="icon-btn" aria-label="Fechar" title="Fechar (Esc)"></button>
+    </header>
+    <nav id="tabs"></nav>
+    <div id="panel-body"></div>
+  </aside>
+
+  <!-- EDITOR DE ATALHO (Salvar vem primeiro no código para ser o botão do Enter) -->
+  <dialog id="sc-dialog">
+    <form method="dialog" id="sc-form">
+      <div class="sheet-head">
+        <button value="ok" class="txt strong">Salvar</button>
+        <h3 id="sc-title">Atalho</h3>
+        <button value="cancel" class="txt" formnovalidate>Cancelar</button>
+      </div>
+      <div class="group">
+        <label class="row-item"><span class="lbl">Nome</span><input name="name" class="inline" required placeholder="YouTube" autocomplete="off"></label>
+        <label class="row-item"><span class="lbl">Site</span><input name="url" class="inline" required placeholder="youtube.com" autocomplete="off" spellcheck="false"></label>
+        <label class="row-item"><span class="lbl">Ícone</span><input name="icon" class="inline" placeholder="Emoji ou link (opcional)" autocomplete="off"></label>
+      </div>
+      <button type="button" id="sc-delete" class="danger-link">Excluir atalho</button>
+    </form>
+  </dialog>
+
+  <!-- ADICIONAR FAVORITOS POR BUSCA -->
+  <dialog id="pick-dialog">
+    <div class="sheet-head">
+      <span class="spacer"></span>
+      <h3>Adicionar favoritos</h3>
+      <button type="button" id="pick-done" class="txt strong">Concluído</button>
+    </div>
+    <label class="pick-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="pick-q" type="text" placeholder="Pesquise um site…" autocomplete="off" spellcheck="false">
+    </label>
+    <h5 id="pick-caption" class="pick-caption">Mais visitados</h5>
+    <div id="pick-list" class="group pick-list"></div>
+    <button type="button" id="pick-manual" class="pick-manual">Adicionar manualmente</button>
+  </dialog>
+
+  <!-- ADICIONAR FONTE DE NOTÍCIAS POR BUSCA -->
+  <dialog id="src-dialog" class="pick-dialog">
+    <div class="sheet-head">
+      <span class="spacer"></span>
+      <h3>Adicionar fonte</h3>
+      <button type="button" id="src-done" class="txt strong">Concluído</button>
+    </div>
+    <label class="pick-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="src-q" type="text" placeholder="Pesquise um jornal, revista ou blog…" autocomplete="off" spellcheck="false">
+    </label>
+    <h5 id="src-caption" class="pick-caption">Fontes prontas</h5>
+    <div id="src-list" class="group pick-list"></div>
+  </dialog>
+
+  <!-- ADICIONAR ATIVOS DO MERCADO -->
+  <dialog id="asset-dialog" class="pick-dialog">
+    <div class="sheet-head">
+      <span class="spacer"></span>
+      <h3>Adicionar ativos</h3>
+      <button type="button" id="asset-done" class="txt strong">Concluído</button>
+    </div>
+    <label class="pick-search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="asset-q" type="text" placeholder="Nome ou código: petrobras, HGLG11, nvidia…" autocomplete="off" spellcheck="false">
+    </label>
+    <div id="asset-cats" class="news-chips asset-cats"></div>
+    <div id="asset-list" class="group pick-list"></div>
+  </dialog>
+
+  <script src="newtab.js"></script>
+</body>
+</html>

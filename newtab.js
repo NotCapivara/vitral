@@ -1896,11 +1896,14 @@ function paintMarket(card, data) {
       h('button', { type: 'button', onclick: () => { togglePanel(true); openTab('blocos'); const b = $('#panel-body'), t = $('#market-settings'); if (t) b.scrollTo({ top: t.offsetTop - b.offsetTop - 8, behavior: 'smooth' }); } }, 'Escolher ativos')));
     return fitSoon();
   }
-  const rows = mk.symbols.map(({ s, name }) => {
+  // juros e inflação (Banco Central) não dependem do período escolhido: ficam num grupo à parte, embaixo
+  const isRate = s => s.startsWith('@bcb:');
+  const ordered = [...mk.symbols.filter(x => !isRate(x.s)), ...mk.symbols.filter(x => isRate(x.s))];
+  const rows = ordered.map(({ s, name }) => {
     const q = data && data.data && data.data[s];
     const ch = q && q.base ? (q.price / q.base - 1) * 100 : null;
     const up = ch == null || ch >= 0;
-    return h('div', { class: 'mk-row', title: s },
+    return h('div', { class: 'mk-row' + (isRate(s) ? ' fixed' : ''), title: s },
       h('span', { class: 'mk-badge' }, marketBadge(s)),
       h('div', { class: 'mk-name' }, h('span', { class: 'lbl' }, name || (q && q.name) || s), h('span', { class: 'sub' }, q && q.label ? q.label : isSpecial(s) ? marketKind(s) : s.replace(/\.SA$/, ''))),
       mk.spark ? sparkline(q && q.points, q && q.rate ? q.price >= q.base : up) : null,
@@ -1908,6 +1911,9 @@ function paintMarket(card, data) {
         q && q.rate ? rateChange(q) : ch != null ? h('span', { class: 'mk-ch ' + (up ? 'up' : 'down') }, (up ? '▲ ' : '▼ ') + Math.abs(ch).toLocaleString('pt-BR', { maximumFractionDigits: 2, minimumFractionDigits: 2 }) + '%') : null));
   });
   const foot = data && data.failed && data.failed.length ? h('div', { class: 'news-foot' }, 'Sem cotação agora: ' + data.failed.map(s => s.replace(/\.SA$/, '')).join(', ')) : null;
+  const firstRate = rows.findIndex(r => r.classList.contains('fixed'));
+  if (firstRate >= 0) rows.splice(firstRate, 0, h('div', { class: 'mk-sep' + (firstRate === 0 ? ' alone' : ''), title: 'Estes valores não mudam com Dia, Semana, Mês ou Ano' },
+    h('span', {}, 'Juros e inflação')));
   const list = h('div', { class: 'mk-list' }, rows);
   // troca de período: enquanto carrega, a lista antiga apaga; quando chega, as linhas entram em sequência
   if (marketSwitch) {
@@ -1916,7 +1922,7 @@ function paintMarket(card, data) {
       // a mesma resposta pode pintar o bloco duas vezes seguidas; as duas animam
       setTimeout(() => { marketSwitch = false; }, 120);
       list.classList.add('switching');
-      rows.forEach((el, i) => el.style.setProperty('--i', i));
+      rows.filter(el => !el.matches('.fixed, .mk-sep')).forEach((el, i) => el.style.setProperty('--i', i));
     }
   }
   card.replaceChildren(...[head, list, foot].filter(Boolean));

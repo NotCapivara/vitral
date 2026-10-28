@@ -832,3 +832,14 @@ body.panel-open #open-settings:hover { opacity: 1; transform: rotate(135deg); }
 .news-chips[data-fit="2"] button, .news-chips[data-fit="3"] button { font-size: .68em; height: 26px; }
 .news-chips[data-fit="2"] .src-ic, .news-chips[data-fit="3"] .src-ic { width: 12px; height: 12px; }
 .news-chips[data-fit="3"] { flex-wrap: wrap; row-gap: 2px; padding: 2px 0; }.news-chips button.line-start::before { opacity: 0; }
+
+/* Juros e inflação: grupo à parte (não muda com o período), sem apagar nem animar na troca */
+.mk-sep {
+  display: flex; align-items: center; gap: 10px; margin: 6px 8px 2px; color: var(--muted);
+  font-size: .62em; font-weight: 500; letter-spacing: .14em; text-transform: uppercase;
+}
+.mk-sep::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+.mk-sep.alone { display: none; }
+.mk-list.dimmed { opacity: 1; }
+.mk-list.dimmed > :not(.fixed, .mk-sep) { opacity: .4; transition: opacity .25s ease; }
+.mk-list.switching > .fixed, .mk-list.switching > .mk-sep { animation: none; }

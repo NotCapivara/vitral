@@ -2,6 +2,8 @@
 
 Extensão para Brave/Chrome que troca a página de nova guia por uma tela limpa, em vidro, que cabe inteira na tela, sem rolagem.
 
+![Nova guia com relógio, busca, citação, Mercado e Notícias](docs/captura.webp)
+
 ## O que tem
 
 - **Relógio e saudação**

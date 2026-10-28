@@ -27,11 +27,11 @@ As configurações ficam só no navegador (`chrome.storage.local`).
 
 ## Instalar
 
-1. Baixe ou clone este repositório.
+1. Baixe o **`vitral-vX.Y.Z.zip`** da [versão mais recente](https://github.com/NotCapivara/vitral/releases/latest) e extraia numa pasta que você não vá apagar.
 2. Abra `brave://extensions` (ou `chrome://extensions`) e ligue o **Modo do desenvolvedor**.
-3. Clique em **Carregar sem compactação** e escolha esta pasta.
+3. Clique em **Carregar sem compactação** e escolha a pasta **`vitral`** que saiu do zip.
 
-Depois de editar os arquivos, clique em ↻ no cartão da extensão.
+Se você clonou o repositório para editar o código, escolha a pasta do clone e, depois de cada edição, clique em ↻ no cartão da extensão.
 
 ## Dados externos
 

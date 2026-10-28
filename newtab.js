@@ -2011,8 +2011,8 @@ function sparkline(points, up) {
   const min = Math.min(...pts), max = Math.max(...pts), span = max - min || 1;
   const xy = pts.map((v, i) => [i / (pts.length - 1) * (W - padR), max === min ? H / 2 : bottom - (v - min) / span * (bottom - top)]);
   const d = smoothPath(xy), [ex, ey] = xy[xy.length - 1];
-  // sombra em degradê nos dois sentidos (some para baixo e para a esquerda, o passado);
-  // a linha nasce suave à esquerda e termina num ponto discreto no valor atual
+  // sombra em degradê: some para baixo, para a esquerda (o passado) e também na ponta direita,
+  // sem a quina reta embaixo do valor atual; a linha nasce suave à esquerda e termina num ponto discreto
   const id = 'spk' + (++sparkSeq);
   const s = h('span', { class: 'spark ' + (up ? 'up' : 'down') });
   s.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" shape-rendering="geometricPrecision">
@@ -2022,10 +2022,11 @@ function sparkline(points, up) {
         <stop offset=".55" stop-color="currentColor" stop-opacity=".08"/>
         <stop offset="1" stop-color="currentColor" stop-opacity="0"/>
       </linearGradient>
-      <linearGradient id="${id}h" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="${W}" y2="0">
+      <linearGradient id="${id}h" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="${f2(ex)}" y2="0">
         <stop offset="0" stop-color="#fff" stop-opacity="0"/>
-        <stop offset=".55" stop-color="#fff" stop-opacity=".55"/>
-        <stop offset="1" stop-color="#fff" stop-opacity="1"/>
+        <stop offset=".45" stop-color="#fff" stop-opacity=".55"/>
+        <stop offset=".72" stop-color="#fff" stop-opacity="1"/>
+        <stop offset="1" stop-color="#fff" stop-opacity="0"/>
       </linearGradient>
       <mask id="${id}m" maskUnits="userSpaceOnUse" x="0" y="0" width="${W}" height="${H}">
         <rect width="${W}" height="${H}" fill="url(#${id}h)"/>
@@ -2086,7 +2087,11 @@ function paintMarket(card, data) {
       if (prev != null && prev !== q.price) tick = q.price > prev ? ' tick-up' : ' tick-down';
       lastPrice[key] = q.price;
     }
-    return h('div', { class: 'mk-row' + (isRate(s) ? ' fixed' : '') + tick, title: s },
+    // juros e inflação: a assinatura diz se algo mudou; se não mudou, a linha que já está na tela é mantida
+    const sig = isRate(s) ? [s, mk.spark, q ? '' : !!(data && data.loading), q && q.price, q && q.base, q && (q.points || []).length, q && (q.points || []).at(-1)].join('|') : null;
+    const kept = sig && [...card.querySelectorAll(':scope > .mk-list > .mk-row.fixed')].find(el => el.dataset.sig === sig);
+    if (kept) return kept;
+    return h('div', { class: 'mk-row' + (isRate(s) ? ' fixed' : '') + tick, title: s, 'data-sig': sig || undefined },
       h('span', { class: 'mk-badge' }, marketBadge(s)),
       // só o nome, numa linha; nos destaques do dia, o código da ação que foi a maior alta/baixa
       h('div', { class: 'mk-name' }, moverLabel(s, q) || h('span', { class: 'lbl' }, name || (q && q.name) || s)),
@@ -2096,8 +2101,9 @@ function paintMarket(card, data) {
   });
   const foot = data && data.failed && data.failed.length ? h('div', { class: 'news-foot' }, 'Sem cotação agora: ' + data.failed.map(s => (mk.symbols.find(x => x.s === s) || {}).name || s.replace(/\.SA$/, '')).join(', ')) : null;
   const firstRate = rows.findIndex(r => r.classList.contains('fixed'));
-  if (firstRate >= 0) rows.splice(firstRate, 0, h('div', { class: 'mk-sep' + (firstRate === 0 ? ' alone' : ''), title: 'Estes valores não mudam com Dia, Semana, Mês ou Ano' },
-    h('span', {}, 'Juros e inflação')));
+  const oldSep = card.querySelector(':scope > .mk-list > .mk-sep');
+  if (firstRate >= 0) rows.splice(firstRate, 0, oldSep && oldSep.classList.contains('alone') === (firstRate === 0) ? oldSep
+    : h('div', { class: 'mk-sep' + (firstRate === 0 ? ' alone' : ''), title: 'Estes valores não mudam com Dia, Semana, Mês ou Ano' }, h('span', {}, 'Juros e inflação')));
   const list = h('div', { class: 'mk-list' }, rows);
   // troca de período: enquanto carrega, a lista antiga apaga; quando chega, as linhas entram em sequência
   if (marketSwitch) {

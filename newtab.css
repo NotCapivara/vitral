@@ -1017,3 +1017,18 @@ dialog.closing::backdrop { animation: backdrop-out .22s ease-in both; }
 .card.market:not(:has(.spark)) .mk-row { grid-template-columns: 34px minmax(56px, 1fr) auto; }
 @container (max-width: 380px) { .card.market:not(:has(.spark)) .mk-row { grid-template-columns: 30px minmax(48px, 1fr) auto; } }
 @container (max-width: 230px) { .card.market:not(:has(.spark)) .mk-row { grid-template-columns: minmax(40px, 1fr) auto; } }
+/* Mercado: todas as linhas dividem as mesmas colunas (subgrid). A coluna do preço tem a largura do maior
+   preço, então os minigráficos ficam num eixo vertical único, mesmo com preços de tamanhos diferentes */
+.mk-list { display: grid; grid-template-columns: 34px minmax(56px, 1fr) minmax(36px, 84px) auto; column-gap: 10px; }
+.mk-list > * { grid-column: 1 / -1; }
+.card.market:not(:has(.spark)) .mk-list { grid-template-columns: 34px minmax(56px, 1fr) auto; }
+@container (max-width: 380px) {
+  .mk-list { grid-template-columns: 30px minmax(48px, 1fr) minmax(28px, 64px) auto; column-gap: 8px; }
+  .card.market:not(:has(.spark)) .mk-list { grid-template-columns: 30px minmax(48px, 1fr) auto; }
+}
+@container (max-width: 300px) { .mk-list, .card.market:not(:has(.spark)) .mk-list { grid-template-columns: 28px minmax(40px, 1fr) auto; } }
+@container (max-width: 230px) { .mk-list, .card.market:not(:has(.spark)) .mk-list { grid-template-columns: minmax(40px, 1fr) auto; } }
+.mk-row, .card.market:not(:has(.spark)) .mk-row { grid-template-columns: subgrid !important; column-gap: inherit !important; }
+body.grid-stretch .card.market .mk-list { align-content: space-around; }
+/* Troca de período (Dia, Semana, Mês, Ano): juros e inflação não mudam, então não apagam nem redesenham */
+.mk-list.switching > .fixed .spark *, .mk-list.dimmed > .fixed .spark * { animation: none !important; }

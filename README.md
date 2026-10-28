@@ -43,5 +43,6 @@ Os dados de fora vêm de serviços gratuitos e sem cadastro:
 | Juros e inflação | Banco Central (SGS) |
 | Ícones | DuckDuckGo |
 | Nomes de sites | Wikidata |
+| Notícias de um site cujo feed falhou (ex.: verificação anti-robô) | Bing Notícias |
 
 Os sites de notícias só são acessados depois que você dá permissão para cada um.

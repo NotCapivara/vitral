@@ -546,7 +546,13 @@ function fitToScreen() {
     if (!best || k > best.k) best = { level, k };
   }
   card.dataset.fit = best.level;
-  show(Math.max(1, best.k));
+  let k = Math.max(1, best.k);
+  show(k);
+  // última linha incompleta deixa um vão: completa com as próximas notícias que couberem
+  // (a seguinte pode ter título maior e esticar a linha); se nenhuma couber, tira a linha incompleta
+  const cols = getComputedStyle(list).gridTemplateColumns.split(' ').length;
+  for (const it of order.slice(k)) { if (k % cols === 0) break; it.hidden = false; if (fits()) k++; else it.hidden = true; }
+  if (k % cols && k > cols) order.filter(i => !i.hidden).slice(k - k % cols).forEach(i => { i.hidden = true; });
 }
 let fitTimer;
 const fitSoon = () => { cancelAnimationFrame(fitTimer); fitTimer = requestAnimationFrame(fitToScreen); };
@@ -976,10 +982,20 @@ function parseFeed(text, src) {
       }
       if (image) break;
     }
-    // primeira imagem de verdade do texto (pula pixels de rastreamento, como o da Agência Brasil)
-    if (!image) for (const m of html.matchAll(/<img\b[^>]*>/gi)) {
+    // primeira imagem de verdade do texto (pula pixels de rastreamento, como o da Agência Brasil).
+    // Fotos de "Leia mais" são de outra notícia: ficam num <aside> ou num link para outra página (ex.: CNN Brasil)
+    const page = u => u.split(/[?#]/)[0].replace(/\/$/, '');
+    const own = html.replace(/<aside\b[\s\S]*?<\/aside>/gi, '').replace(/<a\b[^>]*?href=["']([^"']*)["'][^>]*>[\s\S]*?<\/a>/gi,
+      (a, href) => /\.(jpe?g|png|webp|avif|gif)([?#]|$)/i.test(href) || page(href) === page(link) ? a : '');
+    if (!image) for (const m of own.matchAll(/<img\b[^>]*>/gi)) {
       const src = (m[0].match(/\bsrc=["']([^"']+)/i) || [])[1];
       if (src && !isPixel(m[0], src)) { image = src.replace(/&amp;/g, '&'); break; }
+    }
+    // feed do Bing Notícias (plano B, ver bingFeed): o link do artigo vem dentro de "url=" e a foto em <News:Image>
+    if (src.bing) {
+      try { link = new URL(link).searchParams.get('url') || link; } catch {}
+      const im = tag('News:Image');
+      if (!image && im) image = im.textContent.trim().replace(/^http:/, 'https:') + '&w=400&h=260&c=14';
     }
     const summary = clip(leadText(html, val('title')), 420);
     const date = Date.parse(val('pubDate', 'published', 'updated', 'dc:date')) || 0;
@@ -1196,7 +1212,7 @@ const newsKey = srcs => srcs.map(s => s.url).join('|');
 
 let newsJob = null;
 // sobe quando a forma de ler os feeds muda: as notícias guardadas são lidas de novo
-const NEWS_V = 6;
+const NEWS_V = 7;
 
 // ---------- Peneira: filtro de qualidade — sem propaganda, sem "só manchete", sem notícia velha ----------
 // no título só sinais fortes ("oferta de ações" e "ofertas de demissão" são notícia de verdade)
@@ -1237,10 +1253,17 @@ async function loadNews(force) {
       if (!ok.length) throw new Error('sem notícias');
       return ok;
     };
-    const res = await Promise.allSettled(srcs.map(readSource));
+    // se o feed falhar (verificação anti-robô, site fora do ar, feed quebrado), as notícias do mesmo site vêm
+    // do Bing Notícias; se nem assim, tenta o feed de novo uma vez (falha passageira de rede)
+    const bingFeed = s => ({ ...s, page: false, extra: [], bing: true, url: `https://www.bing.com/news/search?q=site%3a${encodeURIComponent(bareHost(s.site || s.url))}&format=rss&setlang=pt-BR&cc=BR` });
+    const res = await Promise.allSettled(srcs.map(s => readSource(s)
+      .catch(() => readSource(bingFeed(s)))
+      .catch(() => new Promise(r => setTimeout(r, 1500)).then(() => readSource(s)))));
     const failed = srcs.filter((s, i) => res[i].status === 'rejected').map(s => s.name);
+    // se ainda falhou, mantém as notícias que essa fonte já tinha
+    const kept = name => cache.key === key ? (cache.items || []).filter(it => it.source === name) : [];
     const seen = new Set();
-    let items = res.flatMap(r => r.status === 'fulfilled' ? r.value.filter(it => !cfg.news.clean || isGoodNews(it)).sort((a, b) => b.date - a.date).slice(0, 15) : [])
+    let items = res.flatMap((r, i) => r.status === 'fulfilled' ? r.value.filter(it => !cfg.news.clean || isGoodNews(it)).sort((a, b) => b.date - a.date).slice(0, 15) : kept(srcs[i].name))
       .filter(it => !seen.has(it.link) && seen.add(it.link))
       .sort((a, b) => b.date - a.date);
     // se tudo falhou (ex.: sem internet), mantém as notícias que já estavam
@@ -1764,7 +1787,7 @@ function marketBadge(sym) {
   return txt(code.replace(/\d+$/, '').slice(0, 4) || code.slice(0, 4), code.length > 3 ? 'small' : '');
 }
 const marketKind = (sym, type = '', name = '') =>
-  sym.startsWith('@bcb:') ? 'Taxa' : /^@(top|bottom):/.test(sym) ? 'Destaque do dia'
+  sym.startsWith('@bcb:') ? 'Taxa' : /^@(top|bottom):/.test(sym) ? 'Destaque do período'
   : /=X$/.test(sym) || type === 'CURRENCY' ? 'Moeda'
   : type === 'CRYPTOCURRENCY' || /^(BTC|ETH|SOL|XRP|ADA|DOGE|LTC|BNB)-/.test(sym) ? 'Cripto'
   : sym.startsWith('^') || type === 'INDEX' ? 'Índice'
@@ -1812,7 +1835,7 @@ async function quoteAwesome(sym) {
   return { price, base: price / (1 + pct / 100), currency: q.codein, name: q.name, points, at: Date.now() };
 }
 // ---------- Itens especiais do Mercado ----------
-// "@top:BR" / "@bottom:BR": maior alta / maior baixa do dia entre as principais ações de cada bolsa
+// "@top:BR" / "@bottom:BR": maior alta / maior baixa do período escolhido (Dia, Semana…) entre as principais ações de cada bolsa
 // "@bcb:432": séries do Banco Central (Selic, CDI, IPCA)
 const MOVER_BASKETS = {
   BR: ['PETR4', 'VALE3', 'ITUB4', 'BBDC4', 'BBAS3', 'B3SA3', 'ABEV3', 'WEGE3', 'PRIO3', 'ELET3', 'SUZB3', 'RENT3', 'EMBR3', 'MGLU3', 'BBSE3', 'GGBR4', 'CSNA3', 'USIM5',
@@ -1820,6 +1843,9 @@ const MOVER_BASKETS = {
     'BPAC11', 'SANB11', 'ITSA4', 'ASAI3', 'TOTS3', 'HYPE3', 'YDUQ3', 'COGN3', 'CVCB3', 'MRVE3', 'CYRE3', 'BRAV3'].map(s => s + '.SA'),
   AR: ['GGAL', 'BMA', 'YPFD', 'PAMP', 'TXAR', 'ALUA', 'CEPU', 'TGSU2', 'CRES', 'SUPV', 'BYMA', 'COME', 'EDN', 'LOMA', 'MIRG', 'TECO2', 'TRAN', 'VALO', 'BBAR', 'CVH', 'TGNO4', 'METR'].map(s => s + '.BA'),
   MX: ['AMXB', 'WALMEX', 'FEMSAUBD', 'GFNORTEO', 'GMEXICOB', 'CEMEXCPO', 'BIMBOA', 'GAPB', 'ASURB', 'OMAB', 'KOFUBL', 'AC', 'GRUMAB', 'ALSEA', 'PINFRA', 'ORBIA', 'LABB', 'KIMBERA', 'BOLSAA'].map(s => s + '.MX'),
+  // EUA: no Dia vem a lista pronta do Yahoo com o mercado inteiro; nos outros períodos, as maiores empresas
+  US: ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA', 'BRK-B', 'AVGO', 'JPM', 'LLY', 'V', 'UNH', 'XOM', 'MA', 'JNJ', 'PG', 'HD', 'COST', 'ORCL',
+    'NFLX', 'BAC', 'KO', 'PEP', 'ABBV', 'CVX', 'MRK', 'AMD', 'ADBE', 'CRM', 'WMT', 'DIS', 'INTC', 'NKE', 'BA', 'PFE', 'T', 'UBER', 'PYPL', 'CSCO'],
   CRYPTO: ['BTC', 'ETH', 'SOL', 'XRP', 'BNB', 'ADA', 'DOGE', 'TRX', 'AVAX', 'LINK', 'DOT', 'LTC', 'BCH', 'TON11419', 'SHIB', 'XLM', 'UNI7083', 'NEAR', 'ATOM', 'APT21794'].map(s => s + '-USD')
 };
 const MOVER_NAMES = { BR: 'Brasil', US: 'EUA', AR: 'Argentina', MX: 'México', CRYPTO: 'Cripto' };
@@ -1830,12 +1856,12 @@ const BCB_SERIES = {
 };
 const isSpecial = s => s.startsWith('@');
 
-// várias cotações num pedido só (até 20 por vez)
-async function sparkBatch(symbols) {
+// variação de várias ações no período (Dia, Semana, Mês, Ano), num pedido só (até 20 por vez)
+async function sparkBatch(symbols, range = '1d') {
   const out = {};
   for (let i = 0; i < symbols.length; i += 20) {
     const part = symbols.slice(i, i + 20);
-    const j = await getJson(`${YF}/v8/finance/spark?symbols=${part.map(encodeURIComponent).join(',')}&range=1d&interval=1d`);
+    const j = await getJson(`${YF}/v8/finance/spark?symbols=${part.map(encodeURIComponent).join(',')}&range=${range}&interval=${range === '1y' ? '1wk' : '1d'}`);
     for (const [k, v] of Object.entries(j)) {
       const last = (v.close || []).filter(x => x != null).pop();
       if (last != null && v.chartPreviousClose) out[k] = (last / v.chartPreviousClose - 1) * 100;
@@ -1843,22 +1869,22 @@ async function sparkBatch(symbols) {
   }
   return out;
 }
-async function quoteMover(code) {
+async function quoteMover(code, range = '1d') {
   const [kind, region] = code.slice(1).split(':'), top = kind === 'top';
   let pick;
-  if (region === 'US') {
+  if (region === 'US' && range === '1d') {
     // EUA: lista pronta do Yahoo com o mercado inteiro
     const j = await getJson(`${YF}/v1/finance/screener/predefined/saved?scrIds=${top ? 'day_gainers' : 'day_losers'}&count=1&lang=pt-BR`);
     const q = j.finance.result[0].quotes[0];
     pick = q.symbol;
   } else {
-    const ch = await sparkBatch(MOVER_BASKETS[region]);
+    const ch = await sparkBatch(MOVER_BASKETS[region], range);
     const list = Object.entries(ch).sort((a, b) => top ? b[1] - a[1] : a[1] - b[1]);
     if (!list.length) throw new Error('sem dados');
     pick = list[0][0];
   }
-  const q = await quoteYahoo(pick, '1d');
-  return { ...q, sym: pick, label: pick.replace(/\.(SA|BA|MX)$/, '').replace(/-USD$/, '') + ' · ' + q.name };
+  const q = await quoteYahoo(pick, range);
+  return { ...q, sym: pick, range, label: pick.replace(/\.(SA|BA|MX)$/, '').replace(/-USD$/, '') + ' · ' + q.name };
 }
 async function quoteBcb(code) {
   const id = +code.split(':')[1], meta = BCB_SERIES[id];
@@ -1879,7 +1905,7 @@ async function quoteBcb(code) {
 }
 
 async function fetchQuote(sym, range) {
-  if (/^@(top|bottom):/.test(sym)) return quoteMover(sym);
+  if (/^@(top|bottom):/.test(sym)) return quoteMover(sym, range);
   if (sym.startsWith('@bcb:')) return quoteBcb(sym);
   const crypto = sym.match(/^(BTC|ETH|SOL|XRP|ADA|DOGE|LTC|BNB)-(BRL|USD|EUR)$/);
   if (crypto) {
@@ -2044,14 +2070,17 @@ function sparkline(points, up) {
   return s;
 }
 const f2 = v => v.toFixed(2);
-// destaque do dia numa linha só, igual aos outros nomes: "PRIO3 · BR" (a seta do símbolo já diz
+// destaque do período numa linha só, igual aos outros nomes: "PRIO3 · BR" (o período já está escolhido acima; a seta do símbolo já diz
 // se é alta ou baixa); o nome completo da empresa fica na dica ao passar o mouse
+const MOVER_PERIOD = { '1d': 'do dia', '5d': 'da semana', '1mo': 'do mês', '1y': 'do ano' };
 function moverLabel(s, q) {
   const m = s.match(/^@(top|bottom):(\w+)$/);
   if (!m || !q || !q.label) return null;
   const [code, company] = q.label.split(' · ');
   const kind = m[1] === 'top' ? 'alta' : 'baixa', where = MOVER_NAMES[m[2]] || m[2];
-  return h('span', { class: 'lbl', title: `Maior ${kind} do dia · ${where}: ${code}${company ? ' (' + company + ')' : ''}` },
+  // o período dos dados (enquanto o novo carrega, a linha antiga continua com o nome dela)
+  const of = MOVER_PERIOD[q.range || '1d'];
+  return h('span', { class: 'lbl', title: `Maior ${kind} ${of} · ${where}: ${code}${company ? ' (' + company + ')' : ''}` },
     `${code} · ${{ CRYPTO: 'cripto' }[m[2]] || m[2]}`);
 }
 function paintMarket(card, data) {
@@ -2093,7 +2122,7 @@ function paintMarket(card, data) {
     if (kept) return kept;
     return h('div', { class: 'mk-row' + (isRate(s) ? ' fixed' : '') + tick, title: s, 'data-sig': sig || undefined },
       h('span', { class: 'mk-badge' }, marketBadge(s)),
-      // só o nome, numa linha; nos destaques do dia, o código da ação que foi a maior alta/baixa
+      // só o nome, numa linha; nos destaques do período, o código da ação que foi a maior alta/baixa
       h('div', { class: 'mk-name' }, moverLabel(s, q) || h('span', { class: 'lbl' }, name || (q && q.name) || s)),
       mk.spark ? sparkline(q && q.points, q && q.rate ? q.price >= q.base : up) : null,
       h('div', { class: 'mk-price' }, h('span', {}, !q ? (data && data.loading ? '…' : '—') : q.rate ? q.price.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '% ' + q.unit : fmtPrice(q.price, q.currency, q.sym || s)),
@@ -2141,7 +2170,7 @@ setInterval(() => {
 
 // catálogo de ativos por categoria (símbolos do Yahoo Finance; cripto também no CoinGecko)
 const MARKET_CATALOG = {
-  'Destaques do dia': [['@top:BR', 'Maior alta · Brasil'], ['@bottom:BR', 'Maior baixa · Brasil'], ['@top:US', 'Maior alta · EUA'], ['@bottom:US', 'Maior baixa · EUA'],
+  'Destaques': [['@top:BR', 'Maior alta · Brasil'], ['@bottom:BR', 'Maior baixa · Brasil'], ['@top:US', 'Maior alta · EUA'], ['@bottom:US', 'Maior baixa · EUA'],
     ['@top:AR', 'Maior alta · Argentina'], ['@bottom:AR', 'Maior baixa · Argentina'], ['@top:MX', 'Maior alta · México'], ['@bottom:MX', 'Maior baixa · México'],
     ['@top:CRYPTO', 'Maior alta · Cripto'], ['@bottom:CRYPTO', 'Maior baixa · Cripto']],
   'Juros e inflação': [['@bcb:432', 'Selic'], ['@bcb:4389', 'CDI'], ['@bcb:13522', 'IPCA']],
@@ -2159,7 +2188,7 @@ const MARKET_CATALOG = {
 function openAssetPicker() {
   const mk = cfg.market, dlg = $('#asset-dialog'), q = $('#asset-q'), list = $('#asset-list'), cats = $('#asset-cats');
   const has = s => mk.symbols.some(x => x.s === s);
-  let cat = 'Destaques do dia', token = 0, timer;
+  let cat = 'Destaques', token = 0, timer;
   const row = (s, name, sub) => {
     const state = h('span', { class: 'pick-state' });
     const r = h('button', { type: 'button', class: 'row-item clickable pick-row' }, h('span', { class: 'mk-badge' }, marketBadge(s)),

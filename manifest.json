@@ -1,13 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Vitral",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Sua nova guia em vidro: limpa, personalizável e com notícias e mercado. Sem rastreamento nem telemetria; os dados de fora (notícias, cotações) só vêm do que você ativar.",
   "chrome_url_overrides": {
     "newtab": "newtab.html"
   },
   "permissions": ["storage", "unlimitedStorage", "favicon", "history", "bookmarks", "topSites"],
-  "host_permissions": ["https://icons.duckduckgo.com/*", "https://www.wikidata.org/*", "https://query1.finance.yahoo.com/*", "https://query2.finance.yahoo.com/*", "https://api.coingecko.com/*", "https://economia.awesomeapi.com.br/*", "https://api.bcb.gov.br/*"],
+  "host_permissions": ["https://icons.duckduckgo.com/*", "https://www.wikidata.org/*", "https://query1.finance.yahoo.com/*", "https://query2.finance.yahoo.com/*", "https://api.coingecko.com/*", "https://economia.awesomeapi.com.br/*", "https://api.bcb.gov.br/*", "https://www.bing.com/*"],
   "optional_host_permissions": ["*://*/*"],
   "icons": {
     "16": "icons/star.png", "32": "icons/star.png", "48": "icons/star.png", "128": "icons/star.png"

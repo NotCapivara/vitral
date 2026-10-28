@@ -990,3 +990,30 @@ dialog.closing::backdrop { animation: backdrop-out .22s ease-in both; }
    o complemento do destaque só muda a cor; os códigos e sinais dos símbolos também seguem a fonte */
 .mk-hint { font: inherit; color: var(--muted); margin-left: 5px; }
 .mk-badge, .mk-txt, .mk-txt.small, .mk-txt.sign { font-family: var(--font); }
+/* Mercado compacto quando a tela é baixa (ver fitToScreen) */
+.card.market[data-fit="1"] .mk-row { padding-top: 4px; padding-bottom: 4px; }
+.card.market[data-fit="2"] .mk-row { padding-top: 2px; padding-bottom: 2px; }
+.card.market[data-fit="2"] .mk-badge { width: 28px; height: 28px; }
+.card.market[data-fit="2"] .mk-sep { margin-top: 2px; }
+/* Mercado estreito: nada vaza para fora do bloco. As colunas se ajustam à largura do próprio bloco
+   (não da tela): primeiro o nome e o gráfico cedem, depois o gráfico sai, por fim o símbolo sai */
+.card.market { container-type: inline-size; }
+.mk-row { grid-template-columns: 34px minmax(56px, 1fr) minmax(36px, 84px) auto; gap: 10px; }
+.mk-price { min-width: 0; }
+@container (max-width: 380px) {
+  .mk-row { grid-template-columns: 30px minmax(48px, 1fr) minmax(28px, 64px) auto; gap: 8px; padding-left: 4px; padding-right: 4px; }
+  .mk-badge { width: 30px; height: 30px; }
+  .mk-price > span:first-child { font-size: .82em; }
+}
+@container (max-width: 300px) {
+  .mk-row { grid-template-columns: 28px minmax(40px, 1fr) auto; }
+  .mk-row .spark { display: none; }
+  .mk-badge { width: 28px; height: 28px; }
+}
+@container (max-width: 230px) {
+  .mk-row { grid-template-columns: minmax(40px, 1fr) auto; }
+  .mk-row .mk-badge { display: none; }
+}/* sem minigráfico (desligado em Exibição): as mesmas regras, sem a coluna do gráfico */
+.card.market:not(:has(.spark)) .mk-row { grid-template-columns: 34px minmax(56px, 1fr) auto; }
+@container (max-width: 380px) { .card.market:not(:has(.spark)) .mk-row { grid-template-columns: 30px minmax(48px, 1fr) auto; } }
+@container (max-width: 230px) { .card.market:not(:has(.spark)) .mk-row { grid-template-columns: minmax(40px, 1fr) auto; } }

@@ -497,30 +497,82 @@ function render() {
 function fitToScreen() {
   const app = $('#app'), card = $('.card.news'), list = card && card.querySelector('.news-list');
   if (!app) return;
-  // sem notícias para tirar (ou mesmo tirando tudo): a página inteira encolhe um pouco, até 70%
   app.style.setProperty('--fit-zoom', 1);
-  const shrink = () => { for (let z = .95; z >= .7 && app.scrollHeight > app.clientHeight + 1; z -= .05) app.style.setProperty('--fit-zoom', z.toFixed(2)); };
-  if (!list) return shrink();
-  const items = [...list.children];
+  // a página inteira encolhe um pouco (até 70%) quando mesmo assim não cabe
+  const shrink = () => { for (let z = 95; z >= 70 && app.scrollHeight > app.clientHeight + 1; z -= 5) app.style.setProperty('--fit-zoom', z / 100); };
+  // o Mercado também se compacta (linhas mais juntas) antes de a página encolher
+  const market = $('.card.market');
+  if (market) market.dataset.fit = 0;
+  const compactMarket = () => { if (market) for (let lv = 1; lv <= 2 && app.scrollHeight > app.clientHeight + 1; lv++) market.dataset.fit = lv; };
+  if (!list) { compactMarket(); return shrink(); }
+  const all = [...list.children], spares = all.filter(i => i.hasAttribute('data-spare')), items = all.filter(i => !i.hasAttribute('data-spare'));
   items.forEach(i => { i.hidden = false; });
+  spares.forEach(i => { i.hidden = true; });
+  // preenche o espaço que sobrar com as notícias de reserva, na ordem, enquanto couberem
+  const fill = () => {
+    for (const i of spares) {
+      const before = height(), fitted = !over();
+      i.hidden = false;
+      if (height() > before || (fitted && over()) || card.scrollHeight > card.clientHeight + 1) { i.hidden = true; break; }
+    }
+  };
   card.dataset.fit = 0;
   // altura travada (troca de fonte): o que não couber no bloco sai, como se fosse a tela
   card.style.height = card.dataset.lockH ? card.dataset.lockH + 'px' : '';
+  const height = () => app.scrollHeight;
   const over = () => app.scrollHeight > app.clientHeight + 1 || (card.dataset.lockH && card.scrollHeight > card.clientHeight + 1);
-  if (!over()) return;
+  if (!over()) return fill();
+  // Cada passo só vale se de fato diminuir a página. Quando quem estica a linha é outro bloco
+  // (ex.: um Mercado comprido ao lado), tirar notícias não adianta nada e só deixaria o bloco
+  // vazio: nesse caso o passo é desfeito e as notícias ficam.
+  const helps = (apply, undo) => {
+    const before = height(), lockOver = card.dataset.lockH && card.scrollHeight > card.clientHeight + 1;
+    apply();
+    const lockNow = card.dataset.lockH && card.scrollHeight > card.clientHeight + 1;
+    if (height() < before || (lockOver && !lockNow) || !over()) return true;
+    undo(); return false;
+  };
   // ordem de saída: maior posição na fonte primeiro (as "extras"); entre iguais, a mais antiga
   const order = items.slice().sort((a, b) => (+b.dataset.rank || 0) - (+a.dataset.rank || 0) || (+a.dataset.date || 0) - (+b.dataset.date || 0));
   const extras = order.filter(i => +i.dataset.rank > 0), firsts = order.filter(i => !(+i.dataset.rank > 0));
+  const removed = [];
+  const drop = i => helps(() => { i.hidden = true; }, () => { i.hidden = false; }) && removed.push(i);
   // 1) tira as notícias extras (2ª, 3ª… de uma mesma fonte)
-  for (const i of extras) { if (!over()) return; i.hidden = true; }
+  for (const i of extras) { if (!over()) break; drop(i); }
   // 2) compacta: resumo com 3, 2, 1 linha; sem resumo e imagem menor; sem imagem
-  for (let level = 1; level <= 5 && over(); level++) card.dataset.fit = level;
-  if (!over()) return;
+  for (let level = 1; level <= 5 && over(); level++) {
+    const prev = card.dataset.fit;
+    if (!helps(() => { card.dataset.fit = level; }, () => { card.dataset.fit = prev; })) break;
+  }
   // 3) último recurso: some a notícia mais antiga entre as primeiras de cada fonte
-  for (let k = 0; k < firsts.length - 1 && over(); k++) firsts[k].hidden = true;
+  for (let k = 0; k < firsts.length - 1 && over(); k++) drop(firsts[k]);
+  compactMarket();
   shrink();
-}
-let fitTimer;
+  // 4) sobrou espaço no bloco (ele ficou da altura do vizinho)? primeiro desfaz a compactação
+  // (resumos voltam), depois devolve notícias até preencher
+  for (let lv = +card.dataset.fit - 1; lv >= 0; lv--) {
+    const before = height(), fitted = !over(), prev = card.dataset.fit;
+    card.dataset.fit = lv;
+    if (height() > before || (fitted && over()) || card.scrollHeight > card.clientHeight + 1) { card.dataset.fit = prev; break; }
+  }
+  for (const i of removed.reverse()) {
+    const before = height(), fitted = !over();
+    i.hidden = false;
+    if (height() > before || (fitted && over()) || card.scrollHeight > card.clientHeight + 1) { i.hidden = true; return; }
+  }
+  if (!removed.length) fill();
+  // 5) ainda sobra um vão menor que uma notícia? tenta encaixar mais uma resumindo um pouco mais
+  //    (até resumo de 1 linha); se nem assim couber, deixa como estava
+  for (const i of [...removed, ...spares].filter(x => x.hidden)) {
+    const before = height(), fitted = !over(), prev = +card.dataset.fit;
+    i.hidden = false;
+    const bad = () => height() > before || (fitted && over()) || card.scrollHeight > card.clientHeight + 1;
+    let lv = prev;
+    while (bad() && lv < 3) card.dataset.fit = ++lv;
+    if (bad()) { i.hidden = true; card.dataset.fit = prev; break; }
+  }
+  if (over()) shrink(); // o que voltou para preencher não pode fazer a página passar da tela
+}let fitTimer;
 const fitSoon = () => { cancelAnimationFrame(fitTimer); fitTimer = requestAnimationFrame(fitToScreen); };
 addEventListener('resize', () => { const c = $('.card.news'); if (c) delete c.dataset.lockH; fitSoon(); });
 
@@ -1275,6 +1327,9 @@ function fitChips(chips, key) {
     }
     pill();
     edges();
+    // os filtros mudaram de uma para duas linhas (ou o contrário): a altura do bloco mudou, reajusta
+    const shape = chips.dataset.fit + '|' + chips.offsetHeight;
+    if (chips.dataset.shape !== shape) { chips.dataset.shape = shape; fitSoon(); }
   };
   // o destaque da fonte escolhida desliza da anterior até a nova
   const pill = () => {
@@ -1321,7 +1376,7 @@ function fitChips(chips, key) {
 // imagem da notícia: se falhar, vier minúscula (pixel, ícone) ou travar, sai de vez,
 // sem deixar a caixa vazia ocupando espaço; quando carrega, aparece suave
 function watchImage(img) {
-  const drop = () => { clearTimeout(timer); img.remove(); };
+  const drop = () => { clearTimeout(timer); img.remove(); fitSoon(); };
   img.addEventListener('error', drop);
   img.addEventListener('load', () => {
     if (img.naturalWidth < 48 || img.naturalHeight < 32) return drop();
@@ -1382,7 +1437,11 @@ function paintNews(card, data) {
   let body;
   if (data.loading && !data.items.length) body = h('div', { class: 'news-list' }, [1, 2, 3, 4].map(() => h('div', { class: 'news-skel' })));
   else {
-    const items = newsFilter ? data.items.filter(it => it.source === newsFilter).slice(0, n.count) : balance(data.items, n.count);
+    // além da "Quantidade", vêm notícias de reserva (escondidas): se o bloco ficar mais alto que o
+    // necessário (ex.: da altura do Mercado ao lado), elas aparecem para preencher o espaço
+    const SPARE = 30;
+    const items = newsFilter ? data.items.filter(it => it.source === newsFilter).slice(0, n.count + SPARE) : balance(data.items, n.count + SPARE);
+    const spareFrom = Math.min(n.count, items.length);
     // cor do viés de cada fonte (calculada agora: a nota pode ter mudado depois de guardar as notícias)
     const biasBy = {}, iconBy = {};
     for (const s of newsSources()) { biasBy[s.name] = biasOf(s); iconBy[s.name] = s.icon; }
@@ -1397,7 +1456,7 @@ function paintNews(card, data) {
       const summary = showTr ? it.summary : (it.orig ? it.orig.summary : it.summary);
       const img = n.images && it.image ? h('img', { class: 'news-img', src: it.image, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : null;
       if (img) watchImage(img);
-      return h('a', { class: 'news-item', href: it.link, 'data-rank': rankOf.get(it), 'data-date': it.date || 0 },
+      return h('a', { class: 'news-item', href: it.link, 'data-rank': rankOf.get(it), 'data-date': it.date || 0, 'data-spare': items.indexOf(it) >= spareFrom ? '' : null },
         h('div', { class: 'news-body' },
           h('div', { class: 'news-meta' }, srcIcon(it.site, iconBy[it.source]), h('span', {}, it.source),
             b != null ? h('span', { class: 'bias-pip', style: `--c:${BIAS[b].color}`, title: BIAS[b].label }) : null,
@@ -2026,7 +2085,7 @@ function paintMarket(card, data) {
       h('div', { class: 'mk-price' }, h('span', {}, !q ? (data && data.loading ? '…' : '—') : q.rate ? q.price.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '% ' + q.unit : fmtPrice(q.price, q.currency, q.sym || s)),
         q && q.rate ? rateChange(q) : ch != null ? h('span', { class: 'mk-ch ' + (up ? 'up' : 'down') }, (up ? '▲ ' : '▼ ') + Math.abs(ch).toLocaleString('pt-BR', { maximumFractionDigits: 2, minimumFractionDigits: 2 }) + '%') : null));
   });
-  const foot = data && data.failed && data.failed.length ? h('div', { class: 'news-foot' }, 'Sem cotação agora: ' + data.failed.map(s => s.replace(/\.SA$/, '')).join(', ')) : null;
+  const foot = data && data.failed && data.failed.length ? h('div', { class: 'news-foot' }, 'Sem cotação agora: ' + data.failed.map(s => (mk.symbols.find(x => x.s === s) || {}).name || s.replace(/\.SA$/, '')).join(', ')) : null;
   const firstRate = rows.findIndex(r => r.classList.contains('fixed'));
   if (firstRate >= 0) rows.splice(firstRate, 0, h('div', { class: 'mk-sep' + (firstRate === 0 ? ' alone' : ''), title: 'Estes valores não mudam com Dia, Semana, Mês ou Ano' },
     h('span', {}, 'Juros e inflação')));

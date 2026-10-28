@@ -656,8 +656,10 @@ body.align-center #app { justify-content: safe center; }
 .mk-price { display: flex; flex-direction: column; align-items: flex-end; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .mk-price > span:first-child { font-size: .88em; font-weight: 500; }
 .mk-ch { font-size: .72em; }
-.mk-ch.up, .spark.up { color: #3ccf8e; }
-.mk-ch.down, .spark.down { color: #ff6b5e; }
+/* cores de alta e baixa do Mercado (um pouco mais saturadas que o verde e o vermelho padrão) */
+:root { --up: #2edb8c; --down: #ff574a; }
+.mk-ch.up, .spark.up { color: var(--up); }
+.mk-ch.down, .spark.down { color: var(--down); }
 .spark { display: block; width: 84px; height: 28px; }
 .spark svg { display: block; width: 84px; height: 28px; overflow: visible; }
 .spark .line { fill: none; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
@@ -745,9 +747,11 @@ body.panel-open #open-settings:hover { opacity: 1; transform: rotate(135deg); }
   #panel.opening, #panel.closing, #panel.opening *, #panel-body.switching > *, #panel-title.switching { animation-duration: .01s !important; animation-delay: 0s !important; }
 }
 /* Vidro mais rico: leve aumento de saturação e um brilho na borda de cima. */
-:root { --glass-fx: saturate(1.25); }
+:root { --glass-fx: saturate(1.25); --grain: none; }
 .card, .search input, #panel, dialog, .engine-menu, .toast {
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, .045), rgba(255, 255, 255, 0) 38%);
+  /* granulado opcional (Aparência → Granulado) por cima de um reflexo sutil no topo */
+  background-image: var(--grain, none), linear-gradient(180deg, rgba(255, 255, 255, .045), rgba(255, 255, 255, 0) 38%);
+  background-size: 160px 160px, 100% 100%;
   backdrop-filter: blur(var(--card-blur)) var(--glass-fx);
   -webkit-backdrop-filter: blur(var(--card-blur)) var(--glass-fx);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .09), 0 10px 30px rgba(0, 0, 0, .14);
@@ -843,3 +847,128 @@ body.panel-open #open-settings:hover { opacity: 1; transform: rotate(135deg); }
 .mk-list.dimmed { opacity: 1; }
 .mk-list.dimmed > :not(.fixed, .mk-sep) { opacity: .4; transition: opacity .25s ease; }
 .mk-list.switching > .fixed, .mk-list.switching > .mk-sep { animation: none; }
+/* imagem das notícias: aparece suave quando carrega; se falhar, sai (ver watchImage) */
+.news-img { opacity: 0; transition: opacity .35s ease; }
+.news-img.ok { opacity: 1; }
+
+/* último recurso para caber numa tela só: tudo encolhe um pouco (ver fitToScreen) */
+#top, #center, #widgets { zoom: var(--fit-zoom, 1); }
+
+/* ================= Movimento: tudo fluido =================
+   Curvas usadas: --ease-out (suave, desacelera) e --spring (passa um pouco e volta, como mola). */
+:root {
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --spring: cubic-bezier(.34, 1.56, .64, 1);
+}
+
+/* Abertura da guia: fundo surge, depois relógio, busca, atalhos e blocos em sequência */
+#bg { animation: bg-in .6s ease both; }
+@keyframes bg-in { from { opacity: 0; } }
+body.entering #top > *, body.entering #center > *, body.entering #widgets > * {
+  animation: rise-in .55s var(--ease-out) both;
+  animation-delay: calc(min(var(--i, 0), 10) * 40ms + 40ms);
+}
+body.entering .grid > * { animation: rise-in .55s var(--ease-out) both; animation-delay: calc(min(var(--i, 0), 10) * 40ms + 100ms); }
+body.entering .sc { animation: rise-in .45s var(--ease-out) both; animation-delay: .14s; }
+body.entering .sc:nth-child(2) { animation-delay: .16s; } body.entering .sc:nth-child(3) { animation-delay: .18s; }
+body.entering .sc:nth-child(4) { animation-delay: .20s; } body.entering .sc:nth-child(5) { animation-delay: .22s; }
+body.entering .sc:nth-child(6) { animation-delay: .24s; } body.entering .sc:nth-child(n+7) { animation-delay: .26s; }
+@keyframes rise-in { from { opacity: 0; transform: translateY(14px) scale(.985); filter: blur(4px); } to { opacity: 1; transform: none; filter: none; } }
+
+/* Ajustes de aparência (cor, opacidade, cantos) mudam suavemente em vez de pular */
+.card, .search input, .sc .tile { transition: background-color .35s ease, border-color .35s ease, border-radius .35s ease, box-shadow .35s ease; }
+
+/* Atalhos: pulinho com mola, aperto ao clicar, nome clareia */
+.sc .tile { transition: transform .45s var(--spring), background-color .3s, border-color .3s, box-shadow .3s; }
+.sc:hover .tile { transform: translateY(-4px) scale(1.04); box-shadow: 0 10px 24px rgba(0, 0, 0, .22); border-color: rgba(255, 255, 255, .14); }
+.sc:active .tile { transform: translateY(-1px) scale(.95); transition-duration: .12s; }
+.sc span { transition: color .25s; }
+.sc:hover span { color: var(--text); }
+
+/* Busca: brilho suave ao focar */
+.search input { transition: background-color .3s, border-color .3s, box-shadow .4s var(--ease-out); }
+.search input:focus { box-shadow: 0 0 0 4px rgba(255, 255, 255, .04), 0 12px 32px rgba(0, 0, 0, .18); }
+
+/* Menu de mecanismos: botões com mola */
+.engine-menu button { transition: background .2s, transform .35s var(--spring); }
+.engine-menu button:active { transform: scale(.9); transition-duration: .1s; }
+.engine-menu { animation: menu-in .32s var(--spring); }
+
+/* Notícias e mercado: linhas respondem ao toque */
+.news-item { transition: background .25s, transform .3s var(--ease-out); }
+.news-item:active { transform: scale(.99); }
+.news-item .news-img { transition: opacity .35s ease, transform .5s var(--ease-out); }
+.news-item:hover .news-img.ok { transform: scale(1.04); }
+.mk-row { transition: background .25s, transform .3s var(--ease-out); }
+.mk-row:hover .mk-badge { transform: scale(1.08); }
+.mk-badge { transition: transform .35s var(--spring); }
+
+/* Minigráfico: a linha se desenha da esquerda para a direita, a sombra aparece e o ponto "acende" */
+body.entering .spark .line, .mk-list.switching .spark .line { stroke-dasharray: 1; animation: spark-draw .75s var(--ease-out) both; }
+body.entering .spark .area, .mk-list.switching .spark .area { animation: fade-in .6s ease .18s both; }
+body.entering .spark .dot, body.entering .spark .halo, .mk-list.switching .spark .dot, .mk-list.switching .spark .halo { animation: dot-pop .4s var(--spring) .55s both; transform-box: fill-box; transform-origin: center; }
+@keyframes spark-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes dot-pop { from { opacity: 0; transform: scale(0); } }
+
+/* Preço que mudou na atualização pisca na cor da mudança */
+.mk-row.tick-up .mk-price > span:first-child { animation: tick-up 1.4s ease; }
+.mk-row.tick-down .mk-price > span:first-child { animation: tick-down 1.4s ease; }
+@keyframes tick-up { 0%, 30% { color: var(--up); text-shadow: 0 0 12px color-mix(in srgb, var(--up) 45%, transparent); } }
+@keyframes tick-down { 0%, 30% { color: var(--down); text-shadow: 0 0 12px color-mix(in srgb, var(--down) 45%, transparent); } }
+
+/* Tarefas: nova entra deslizando; concluir esmaece suave */
+.todo-list li { animation: rise-in .45s var(--ease-out) both; }
+body:not(.entering) .todo-list li { animation: none; }
+.todo-list li.fresh { animation: rise-in .45s var(--ease-out) both !important; }
+.todo-list li span { transition: opacity .3s ease, color .3s; }
+.links-list a { transition: opacity .2s, transform .3s var(--ease-out); display: inline-block; }
+.links-list a:hover { transform: translateX(3px); }
+
+/* Botões em geral: aperto rápido ao clicar */
+.icon-btn, .row-item.action, .news-refresh, .move-chip {
+  transition-property: background, color, border-color, opacity, transform;
+  transition-duration: .2s;
+}
+.icon-btn:active, .seg button:active, .row-item.action:active, .news-refresh:active, .move-chip:active, .pick-row:active { transform: scale(.96); transition-duration: .08s; }
+#tabs button:active { transform: scale(.92); }
+.seg button { transition: background .3s var(--ease-out), color .25s, box-shadow .3s, transform .2s; }
+.switch .knob::after { transition: transform .4s var(--spring), width .2s ease; }
+.switch:active .knob::after { width: 26px; }
+.switch input:checked:active + .knob::after { transform: translateX(14px); }
+.row-item.clickable, .pick-row { transition: background .2s, transform .2s; }
+
+/* Janelas: entram com mola e saem encolhendo; o fundo escurece e desfoca aos poucos */
+dialog[open] { animation: dlg-in .42s var(--spring); }
+dialog.closing { animation: dlg-out .22s ease-in both; }
+dialog[open]::backdrop { animation: backdrop-in .35s ease both; }
+dialog.closing::backdrop { animation: backdrop-out .22s ease-in both; }
+@keyframes dlg-in { from { opacity: 0; transform: translateY(12px) scale(.94); } }
+@keyframes dlg-out { to { opacity: 0; transform: translateY(8px) scale(.96); } }
+@keyframes backdrop-in { from { opacity: 0; } }
+@keyframes backdrop-out { to { opacity: 0; } }
+/* listas das janelas: resultados entram em cascata */
+#pick-list > *, #src-list > *, #asset-list > * { animation: news-in .35s var(--ease-out) both; }
+#pick-list > *:nth-child(2), #src-list > *:nth-child(2), #asset-list > *:nth-child(2) { animation-delay: .02s; }
+#pick-list > *:nth-child(3), #src-list > *:nth-child(3), #asset-list > *:nth-child(3) { animation-delay: .04s; }
+#pick-list > *:nth-child(4), #src-list > *:nth-child(4), #asset-list > *:nth-child(4) { animation-delay: .06s; }
+#pick-list > *:nth-child(5), #src-list > *:nth-child(5), #asset-list > *:nth-child(5) { animation-delay: .08s; }
+#pick-list > *:nth-child(n+6), #src-list > *:nth-child(n+6), #asset-list > *:nth-child(n+6) { animation-delay: .1s; }
+
+/* Esqueleto de carregamento das notícias pulsa suave */
+.news-skel { animation: news-shimmer 1.4s linear infinite, fade-in .4s ease both; }
+
+/* Quem prefere menos movimento (configuração do sistema) não vê nada disso */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after, dialog::backdrop { animation-duration: .01ms !important; animation-iteration-count: 1 !important; animation-delay: 0s !important; transition-duration: .01ms !important; }
+}
+.todo-list li.leaving { animation: todo-out .26s ease-in both !important; }
+@keyframes todo-out { to { opacity: 0; transform: translateX(12px); } }
+
+/* Bloco do Mercado estreito: o nome do ativo não quebra no meio ("Iboves/pa");
+   quem cede espaço é o minigráfico, que encolhe proporcionalmente */
+.mk-row { grid-template-columns: 34px minmax(104px, 1fr) minmax(40px, 84px) minmax(96px, auto); }
+.mk-name .lbl, .mk-name .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
+.spark { width: 100%; max-width: 84px; height: auto; }
+.spark svg { width: 100%; height: auto; aspect-ratio: 84 / 28; }
+.spark.empty { width: 100%; }

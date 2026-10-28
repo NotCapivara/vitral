@@ -4,6 +4,10 @@
 
 // ---------- Armazenamento (chrome.storage.local, com fallback p/ testes) ----------
 const hasChrome = typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local;
+// toda chamada de rede passa por aqui: sem cookies (nenhum site reconhece você pela sessão dele)
+// e sem cabeçalho Referer (os sites não ficam sabendo que o pedido veio desta extensão)
+const net = (url, opts = {}) => fetch(url, { credentials: 'omit', referrerPolicy: 'no-referrer', ...opts });
+
 const store = {
   async get(key) {
     if (hasChrome) return (await chrome.storage.local.get(key))[key];
@@ -51,8 +55,8 @@ const DEFAULTS = {
   greetingMode: 'auto',
   greetingText: 'Bem-vindo de volta',
   theme: {
-    accent: '#f7931a', text: '#f2f2f2', card: '#ffffff', cardOpacity: 6,
-    blur: 12, radius: 14, font: 'system-ui, sans-serif', scale: 100,
+    accent: '#f7931a', text: '#f2f2f2', card: '#ffffff', cardOpacity: 12,
+    blur: 12, grain: 0, radius: 14, font: 'system-ui, sans-serif', scale: 100,
     align: 'center', maxWidth: 1100, clockSize: 104, scSize: 56, scCols: 8,
     hideLabels: false, iconStyle: 'favicon',
     gridAlign: 'stretch' // blocos lado a lado na grade: top | stretch (mesma altura) | center | end
@@ -62,6 +66,7 @@ const DEFAULTS = {
     imageUrls: '', rotate: 'random', dim: 0, blurPx: 0
   },
   design: 2,
+  glassScale: 2, // v2: Opacidade e Granulado mostram 0–100%, mas o máximo real é 50% (ver applyTheme)
   pickWeb: true,
   clock: { h24: true, seconds: false, showDate: true },
   blocks: [
@@ -209,12 +214,24 @@ function hexToRgba(hex, alpha) {
   return `rgba(${n >> 16 & 255}, ${n >> 8 & 255}, ${n & 255}, ${alpha})`;
 }
 
+// granulado do vidro: ruído fino por cima do desfoque (0 = desligado). A intensidade vira
+// a opacidade do ruído; ele também desfaz as faixas de cor do desfoque em fundos escuros.
+function grainImage(level) {
+  const k = Math.max(0, Math.min(100, +level || 0)) / 100;
+  if (!k) return 'none';
+  const a = (0.04 + k * 0.5).toFixed(3), b = (-(0.01 + k * 0.17)).toFixed(3);
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 ${a} ${b}'/></filter><rect width='160' height='160' filter='url(%23n)'/></svg>`;
+  return `url("data:image/svg+xml,${svg.replace(/</g, '%3C').replace(/>/g, '%3E')}")`;
+}
+
 async function applyTheme() {
   const t = cfg.theme, r = document.documentElement.style;
   r.setProperty('--accent', t.accent);
   r.setProperty('--text', t.text);
-  r.setProperty('--card', hexToRgba(t.card, t.cardOpacity / 100));
+  // Opacidade e Granulado: o controle vai de 0 a 100%, que equivale a 0–50% de verdade (ajuste mais fino)
+  r.setProperty('--card', hexToRgba(t.card, t.cardOpacity / 200));
   r.setProperty('--card-blur', t.blur + 'px');
+  r.setProperty('--grain', grainImage(t.grain / 2));
   r.setProperty('--radius', t.radius + 'px');
   r.setProperty('--font', t.font);
   r.setProperty('--scale', t.scale / 100);
@@ -403,17 +420,27 @@ const renderers = {
   },
 
   todo() {
+    // mexer numa tarefa só mexe nela (antes a página inteira era redesenhada a cada clique)
     const ul = h('ul', { class: 'todo-list' });
-    cfg.todos.forEach((t, i) => {
-      const cb = h('input', { type: 'checkbox', checked: t.done, onchange: () => { t.done = cb.checked; save(); render(); } });
-      ul.append(h('li', { class: t.done ? 'done' : '' }, cb, h('span', {}, t.text),
-        h('button', { title: 'Remover', onclick: () => { cfg.todos.splice(i, 1); save(); render(); } }, '✕')));
-    });
+    const item = (t, fresh) => {
+      const cb = h('input', { type: 'checkbox', checked: t.done, onchange: () => { t.done = cb.checked; li.classList.toggle('done', t.done); save(); } });
+      const li = h('li', { class: (t.done ? 'done' : '') + (fresh ? ' fresh' : '') }, cb, h('span', {}, t.text),
+        h('button', { title: 'Remover', onclick: () => {
+          const i = cfg.todos.indexOf(t);
+          if (i >= 0) cfg.todos.splice(i, 1);
+          save();
+          li.classList.add('leaving');
+          setTimeout(() => { li.remove(); fitSoon(); }, calmMotion.matches ? 0 : 260);
+        } }, '✕'));
+      return li;
+    };
+    cfg.todos.forEach(t => ul.append(item(t)));
     const add = h('input', { class: 'todo-add', placeholder: '+ nova tarefa (Enter)' });
     add.addEventListener('keydown', e => {
       if (e.key === 'Enter' && add.value.trim()) {
-        cfg.todos.push({ text: add.value.trim(), done: false }); save(); render();
-        requestAnimationFrame(() => $('.todo-add')?.focus());
+        const t = { text: add.value.trim(), done: false };
+        cfg.todos.push(t); save();
+        ul.append(item(t, true)); add.value = ''; fitSoon();
       }
     });
     return h('div', { class: 'card' }, h('h4', {}, 'Tarefas'), ul, add);
@@ -450,10 +477,16 @@ const renderers = {
 let booted = false;
 function render() {
   for (const z of ['top', 'center', 'widgets']) $('#' + z).replaceChildren();
+  let order = 0;
   for (const b of cfg.blocks) {
     if (!b.on || !renderers[b.id]) continue;
     const el = renderers[b.id]();
-    if (el) { applyBlockSize(el, b); $('#' + b.zone).append(el); }
+    if (el) { applyBlockSize(el, b); el.style.setProperty('--i', order++); $('#' + b.zone).append(el); }
+  }
+  // ao abrir a guia, os blocos entram em sequência (só na primeira vez; ajustes depois não reanimam)
+  if (!booted) {
+    document.body.classList.add('entering');
+    setTimeout(() => document.body.classList.remove('entering'), 1000);
   }
   booted = true;
   fitSoon();
@@ -463,7 +496,11 @@ function render() {
 // ("Quantidade" vira o máximo; numa tela menor aparecem menos.)
 function fitToScreen() {
   const app = $('#app'), card = $('.card.news'), list = card && card.querySelector('.news-list');
-  if (!app || !list) return;
+  if (!app) return;
+  // sem notícias para tirar (ou mesmo tirando tudo): a página inteira encolhe um pouco, até 70%
+  app.style.setProperty('--fit-zoom', 1);
+  const shrink = () => { for (let z = .95; z >= .7 && app.scrollHeight > app.clientHeight + 1; z -= .05) app.style.setProperty('--fit-zoom', z.toFixed(2)); };
+  if (!list) return shrink();
   const items = [...list.children];
   items.forEach(i => { i.hidden = false; });
   card.dataset.fit = 0;
@@ -481,6 +518,7 @@ function fitToScreen() {
   if (!over()) return;
   // 3) último recurso: some a notícia mais antiga entre as primeiras de cada fonte
   for (let k = 0; k < firsts.length - 1 && over(); k++) firsts[k].hidden = true;
+  shrink();
 }
 let fitTimer;
 const fitSoon = () => { cancelAnimationFrame(fitTimer); fitTimer = requestAnimationFrame(fitToScreen); };
@@ -597,7 +635,7 @@ async function webSites(q) {
   const api = 'https://www.wikidata.org/w/api.php?format=json&origin=*&';
   const get = async url => {
     const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 8000);
-    try { return await (await fetch(url, { signal: ctl.signal })).json(); } finally { clearTimeout(t); }
+    try { return await (await net(url, { signal: ctl.signal })).json(); } finally { clearTimeout(t); }
   };
   const s = await get(api + 'action=wbsearchentities&type=item&limit=12&language=pt&uselang=pt&search=' + encodeURIComponent(q));
   const ids = (s.search || []).map(x => x.id);
@@ -622,7 +660,7 @@ const remoteIcon = url => 'https://icons.duckduckgo.com/ip3/' + urlHost(url) + '
 // baixa o ícone uma vez e guarda dentro do atalho (data:), para nunca mais depender da internet
 async function iconData(url) {
   try {
-    const r = await fetch(remoteIcon(url));
+    const r = await net(remoteIcon(url));
     if (!r.ok) return '';
     const b = await r.blob();
     if (b.size < 80) return '';
@@ -797,7 +835,7 @@ const covered = url => hasChrome && chrome.permissions ? chrome.permissions.cont
 async function fetchText(url, ms = 10000) {
   const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ms);
   try {
-    const r = await fetch(url, { signal: ctl.signal, credentials: 'omit', cache: 'no-cache' });
+    const r = await net(url, { signal: ctl.signal, credentials: 'omit', cache: 'no-cache' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     // r.text() sempre lê como UTF-8 e estraga acentos de feeds em ISO-8859-1 (ex.: "indeniza��o").
     // Usa a codificação que o site declara (cabeçalho ou <?xml encoding=…?>).
@@ -881,6 +919,10 @@ function parseXml(raw) {
   return tryParse(`${open}${wrap[0]}${tryParse(open + wrap[0] + head + wrap[1] + '</' + tag + '>') ? head : ''}${good.join('')}${wrap[1]}</${tag}>`);
 }
 
+// imagem que não é foto: pixel de rastreamento (1×1), espaçador transparente
+const isPixel = (tagHtml, src) =>
+  /\b(width|height)=["']?[0-3]["'\s>\/]/i.test(tagHtml) ||
+  /(\/(blank|spacer|pixel|transparent|1x1)\.(gif|png)|\/(pixel|tracker|tracking|beacon)[\/?.]|ebc\.(png|gif)|feedburner\.com|feeds\.feedblitz|gravatar\.com\/avatar)/i.test(src);
 function parseFeed(text, src) {
   const doc = parseXml(text);
   if (!doc) return [];
@@ -906,7 +948,11 @@ function parseFeed(text, src) {
       }
       if (image) break;
     }
-    if (!image) { const m = html.match(/<img[^>]+src=["']([^"']+)/i); if (m) image = m[1].replace(/&amp;/g, '&'); }
+    // primeira imagem de verdade do texto (pula pixels de rastreamento, como o da Agência Brasil)
+    if (!image) for (const m of html.matchAll(/<img\b[^>]*>/gi)) {
+      const src = (m[0].match(/\bsrc=["']([^"']+)/i) || [])[1];
+      if (src && !isPixel(m[0], src)) { image = src.replace(/&amp;/g, '&'); break; }
+    }
     const summary = clip(leadText(html, val('title')), 420);
     const date = Date.parse(val('pubDate', 'published', 'updated', 'dc:date')) || 0;
     const title = htmlText(val('title'));
@@ -979,7 +1025,7 @@ async function iconToData(urls, site) {
   for (const u of urls) {
     try {
       if (!/^https?:/.test(u) || !(await covered(u))) continue;  // só domínios com permissão
-      const r = await fetch(u, { credentials: 'omit' });
+      const r = await net(u, { credentials: 'omit' });
       const b = await r.blob();
       if (!r.ok || !/^image\//.test(b.type) || b.size < 80 || b.size > 300000) continue;
       return await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(b); });
@@ -1057,7 +1103,8 @@ function parsePage(html, src, pageUrl) {
     const link = pick ? abs(pick.getAttribute('href')) : '';
     if (!httpUrl(link) || link.split('#')[0] === pageUrl) continue;
     const img = box.querySelector('img');
-    const image = img ? abs(img.getAttribute('src') || img.getAttribute('data-src') || '') : '';
+    let image = img ? abs(img.getAttribute('src') || img.getAttribute('data-src') || '') : '';
+    if (image && isPixel(img.outerHTML, image)) image = '';
     const p = [...box.querySelectorAll('p')].map(x => x.textContent.replace(/\s+/g, ' ').trim()).find(t => t.length >= 40 && !t.includes(title));
     const t = box.querySelector('time');
     const date = looseDate(t && (t.getAttribute('datetime') || t.textContent)) || looseDate(box.textContent.replace(/\s+/g, ' ').replace(title, ''));
@@ -1090,7 +1137,7 @@ async function translate(text) {
   } catch { browserTranslator = false; }
   const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 8000);
   try {
-    const r = await fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=pt&dt=t&q=' + encodeURIComponent(text), { signal: ctl.signal, credentials: 'omit' });
+    const r = await net('https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=pt&dt=t&q=' + encodeURIComponent(text), { signal: ctl.signal, credentials: 'omit' });
     const j = await r.json();
     return (j[0] || []).map(s => s[0]).join('');
   } finally { clearTimeout(t); }
@@ -1271,6 +1318,24 @@ function fitChips(chips, key) {
   requestAnimationFrame(fit);
 }
 
+// imagem da notícia: se falhar, vier minúscula (pixel, ícone) ou travar, sai de vez,
+// sem deixar a caixa vazia ocupando espaço; quando carrega, aparece suave
+function watchImage(img) {
+  const drop = () => { clearTimeout(timer); img.remove(); };
+  img.addEventListener('error', drop);
+  img.addEventListener('load', () => {
+    if (img.naturalWidth < 48 || img.naturalHeight < 32) return drop();
+    clearTimeout(timer); img.classList.add('ok');
+  });
+  // travou: depois de 12 s visível na tela sem terminar, desiste
+  const timer = setTimeout(function check() {
+    if (!img.isConnected || img.classList.contains('ok')) return;
+    // escondida (não coube na tela): espera aparecer e, a partir daí, dá mais 12 s
+    if (img.offsetParent === null) { img.dataset.waited = 1; setTimeout(check, 4000); return; }
+    if (img.dataset.waited) { delete img.dataset.waited; setTimeout(check, 12000); return; }
+    if (!img.complete || !img.naturalWidth) drop();
+  }, 12000);
+}
 let newsFilter = ''; // fonte escolhida nos filtros (só nesta guia)
 let newsSwitch = false; // a próxima pintura vem de uma troca de fonte (anima a lista)
 const pillAt = {}; // onde estava o destaque de cada barra de filtros, para deslizar até o novo
@@ -1331,7 +1396,7 @@ function paintNews(card, data) {
       const title = showTr ? it.title : (it.orig ? it.orig.title : it.title);
       const summary = showTr ? it.summary : (it.orig ? it.orig.summary : it.summary);
       const img = n.images && it.image ? h('img', { class: 'news-img', src: it.image, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : null;
-      if (img) img.addEventListener('error', () => img.remove());
+      if (img) watchImage(img);
       return h('a', { class: 'news-item', href: it.link, 'data-rank': rankOf.get(it), 'data-date': it.date || 0 },
         h('div', { class: 'news-body' },
           h('div', { class: 'news-meta' }, srcIcon(it.site, iconBy[it.source]), h('span', {}, it.source),
@@ -1625,16 +1690,25 @@ const marketKind = (sym, type = '', name = '') =>
 
 const getJson = async (url, ms = 9000) => {
   const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ms);
-  try { const r = await fetch(url, { signal: ctl.signal, credentials: 'omit' }); if (!r.ok) throw new Error('HTTP ' + r.status); return await r.json(); }
+  try { const r = await net(url, { signal: ctl.signal, credentials: 'omit' }); if (!r.ok) throw new Error('HTTP ' + r.status); return await r.json(); }
   finally { clearTimeout(t); }
 };
 // cripto: CoinGecko (gratuito, estável); preço e gráfico do período numa chamada só
 const COINGECKO_IDS = { BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', XRP: 'ripple', ADA: 'cardano', DOGE: 'dogecoin', LTC: 'litecoin', BNB: 'binancecoin' };
+// se o CoinGecko recusar (403/429), fica 6 h sem tentar: não gasta pedidos nem enche o console de erros
+let cgOffUntil = null;
 async function quoteCoinGecko(sym, range) {
   const [coin, vs] = sym.split('-'), id = COINGECKO_IDS[coin];
   if (!id) throw new Error('moeda desconhecida');
+  if (cgOffUntil === null) cgOffUntil = (await store.get('cgOffUntil')) || 0;
+  if (Date.now() < cgOffUntil) throw new Error('CoinGecko em pausa');
   const days = { '1d': 1, '5d': 7, '1mo': 30, '1y': 365 }[range] || 1;
-  const j = await getJson(`https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=${vs.toLowerCase()}&days=${days}`);
+  let j;
+  try { j = await getJson(`https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=${vs.toLowerCase()}&days=${days}`); }
+  catch (e) {
+    if (/HTTP (403|429)/.test(e.message)) { cgOffUntil = Date.now() + 6 * 3600e3; store.set('cgOffUntil', cgOffUntil); }
+    throw e;
+  }
   const pts = (j.prices || []).map(p => p[1]);
   if (!pts.length) throw new Error('sem dados');
   const step = Math.max(1, Math.floor(pts.length / 120));
@@ -1667,7 +1741,7 @@ const MOVER_NAMES = { BR: 'Brasil', US: 'EUA', AR: 'Argentina', MX: 'México', C
 const BCB_SERIES = {
   432: { name: 'Selic', unit: 'a.a.', days: 400 },        // meta definida pelo Copom
   4389: { name: 'CDI', unit: 'a.a.', days: 400 },         // CDI anualizado (base 252)
-  13522: { name: 'IPCA 12 meses', unit: '12m', days: 760 }
+  13522: { name: 'IPCA', unit: '12m', days: 760 }
 };
 const isSpecial = s => s.startsWith('@');
 
@@ -1871,7 +1945,7 @@ function sparkline(points, up) {
       </linearGradient>
     </defs>
     <path class="area" d="${d}L${f2(ex)},${H}L0,${H}Z" fill="url(#${id}v)" mask="url(#${id}m)"/>
-    <path class="line" d="${d}" stroke="url(#${id}l)"/>
+    <path class="line" d="${d}" stroke="url(#${id}l)" pathLength="1"/>
     <circle class="halo" cx="${f2(ex)}" cy="${f2(ey)}" r="3.2"/>
     <circle class="dot" cx="${f2(ex)}" cy="${f2(ey)}" r="1.7"/></svg>`;
   return s;
@@ -1903,7 +1977,14 @@ function paintMarket(card, data) {
     const q = data && data.data && data.data[s];
     const ch = q && q.base ? (q.price / q.base - 1) * 100 : null;
     const up = ch == null || ch >= 0;
-    return h('div', { class: 'mk-row' + (isRate(s) ? ' fixed' : ''), title: s },
+    // subiu ou desceu desde a última atualização (mesmo período): o preço pisca na cor da mudança
+    let tick = '';
+    if (q && !(data && data.loading)) {
+      const key = s + '|' + mk.range, prev = lastPrice[key];
+      if (prev != null && prev !== q.price) tick = q.price > prev ? ' tick-up' : ' tick-down';
+      lastPrice[key] = q.price;
+    }
+    return h('div', { class: 'mk-row' + (isRate(s) ? ' fixed' : '') + tick, title: s },
       h('span', { class: 'mk-badge' }, marketBadge(s)),
       h('div', { class: 'mk-name' }, h('span', { class: 'lbl' }, name || (q && q.name) || s), h('span', { class: 'sub' }, q && q.label ? q.label : isSpecial(s) ? marketKind(s) : s.replace(/\.SA$/, ''))),
       mk.spark ? sparkline(q && q.points, q && q.rate ? q.price >= q.base : up) : null,
@@ -1929,6 +2010,7 @@ function paintMarket(card, data) {
   fitSoon();
 }
 let marketSwitch = false; // a próxima pintura com dados vem de uma troca de período (anima a lista)
+const lastPrice = {}; // último preço mostrado de cada ativo, para piscar quando ele muda
 async function fillMarket(card, force) {
   const cache = (await store.get('market')) || {};
   paintMarket(card, { ...cache, loading: true });
@@ -1945,7 +2027,7 @@ const MARKET_CATALOG = {
   'Destaques do dia': [['@top:BR', 'Maior alta · Brasil'], ['@bottom:BR', 'Maior baixa · Brasil'], ['@top:US', 'Maior alta · EUA'], ['@bottom:US', 'Maior baixa · EUA'],
     ['@top:AR', 'Maior alta · Argentina'], ['@bottom:AR', 'Maior baixa · Argentina'], ['@top:MX', 'Maior alta · México'], ['@bottom:MX', 'Maior baixa · México'],
     ['@top:CRYPTO', 'Maior alta · Cripto'], ['@bottom:CRYPTO', 'Maior baixa · Cripto']],
-  'Juros e inflação': [['@bcb:432', 'Selic'], ['@bcb:4389', 'CDI'], ['@bcb:13522', 'IPCA 12 meses']],
+  'Juros e inflação': [['@bcb:432', 'Selic'], ['@bcb:4389', 'CDI'], ['@bcb:13522', 'IPCA']],
   'Moedas': [['BRL=X', 'Dólar'], ['EURBRL=X', 'Euro'], ['GBPBRL=X', 'Libra'], ['CHFBRL=X', 'Franco suíço'], ['JPYBRL=X', 'Iene'], ['CNYBRL=X', 'Yuan'], ['CADBRL=X', 'Dólar canadense'], ['ARSBRL=X', 'Peso argentino']],
   'Cripto': [['BTC-BRL', 'Bitcoin'], ['ETH-BRL', 'Ethereum'], ['SOL-BRL', 'Solana'], ['XRP-BRL', 'XRP'], ['BNB-BRL', 'BNB'], ['ADA-BRL', 'Cardano'], ['DOGE-BRL', 'Dogecoin'], ['LTC-BRL', 'Litecoin'], ['BTC-USD', 'Bitcoin (US$)']],
   'Índices': [['^BVSP', 'Ibovespa'], ['^GSPC', 'S&P 500'], ['^IXIC', 'Nasdaq'], ['^DJI', 'Dow Jones'], ['^STOXX50E', 'Euro Stoxx 50'], ['^N225', 'Nikkei'], ['^TNX', 'Juros EUA 10 anos']],
@@ -2061,6 +2143,7 @@ const ICONS = {
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   calendar: '<rect x="3" y="5" width="18" height="16" rx="4"/><path d="M8 3v4M16 3v4M3 10h18"/>',
   eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  grain: '<circle cx="6" cy="6" r=".8"/><circle cx="12" cy="8" r=".8"/><circle cx="18" cy="5" r=".8"/><circle cx="8" cy="13" r=".8"/><circle cx="15" cy="14" r=".8"/><circle cx="5" cy="19" r=".8"/><circle cx="11" cy="19" r=".8"/><circle cx="19" cy="19" r=".8"/>',
   blur: '<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8" stroke-dasharray="1.5 3"/>',
   angle: '<path d="M4 20h16M4 20 15 6"/><path d="M10 20a6 6 0 0 0-1.8-4.3"/>',
   shuffle: '<path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/>',
@@ -2184,7 +2267,7 @@ const ACCENTS = ['#f7931a', '#ff6b5e', '#f5c451', '#4fd1a5', '#5aa9ff', '#a78bfa
 
 function favTile(sc) {
   const t = h('span', { class: 'mini-tile' });
-  if (sc.icon && /^(https?:|data:|icons\/)/.test(sc.icon)) t.append(h('img', { src: sc.icon, alt: '' }));
+  if (sc.icon && /^(https?:|data:|icons\/)/.test(sc.icon)) t.append(h('img', { src: sc.icon, alt: '', referrerpolicy: 'no-referrer' }));
   else if (sc.icon) t.textContent = sc.icon;
   else if (hasChrome) t.append(h('img', { alt: '', src: `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(sc.url)}&size=32` }));
   else t.textContent = (sc.name || '?')[0].toUpperCase();
@@ -2254,7 +2337,8 @@ const tabs = {
         ui.colorRow('text', 'Texto', 'theme.text'),
         ui.colorRow('drop', 'Cartões', 'theme.card'),
         ui.slider('eye', 'Opacidade', 'theme.cardOpacity', 0, 100, 1, '%'),
-        ui.slider('blur', 'Vidro', 'theme.blur', 0, 40, 1, 'px')
+        ui.slider('blur', 'Vidro', 'theme.blur', 0, 40, 1, 'px'),
+        ui.slider('grain', 'Granulado', 'theme.grain', 0, 100, 1, '%')
       ),
       ...ui.section('Fonte', h('div', { class: 'row-item' }, fonts)),
       ...ui.section('Layout',
@@ -2532,6 +2616,22 @@ function togglePanel(force) {
   }
 }
 
+// janelas (favoritos, fontes, ativos, atalho) fecham com animação, inclusive pelo Esc
+const calmMotion = matchMedia('(prefers-reduced-motion: reduce)');
+for (const dlg of document.querySelectorAll('dialog')) {
+  const realClose = dlg.close.bind(dlg);
+  dlg.close = value => {
+    if (!dlg.open || calmMotion.matches) return realClose(value);
+    if (dlg.classList.contains('closing')) return;
+    dlg.classList.add('closing');
+    let done = false;
+    const finish = () => { if (done) return; done = true; dlg.classList.remove('closing'); realClose(value); };
+    dlg.addEventListener('animationend', finish, { once: true });
+    setTimeout(finish, 400); // garantia, caso a animação não dispare
+  };
+  dlg.addEventListener('cancel', e => { e.preventDefault(); dlg.close(); });
+}
+
 // ---------- Inicialização ----------
 (async () => {
   const saved = (await store.get('cfg')) || {};
@@ -2543,6 +2643,15 @@ function togglePanel(force) {
     cfg.design = DEFAULTS.design;
     save();
   }
+  // escala nova de Opacidade e Granulado (0–100% no controle = 0–50% de verdade): dobra os valores
+  // guardados uma vez, para o visual de quem já usava não mudar
+  if (saved.theme && saved.glassScale !== DEFAULTS.glassScale) {
+    for (const k of ['cardOpacity', 'grain']) if (saved.design === DEFAULTS.design && k in saved.theme) cfg.theme[k] = Math.min(100, (+saved.theme[k] || 0) * 2);
+    cfg.glassScale = DEFAULTS.glassScale;
+    save();
+  }
+  // "IPCA 12 meses" virou só "IPCA" (o "12m" ao lado do valor já diz o período)
+  for (const x of cfg.market.symbols) if (x.s === '@bcb:13522' && x.name === 'IPCA 12 meses') x.name = 'IPCA';
   // mecanismos: os 6 padrão sempre presentes e protegidos (roda a cada abertura, não perde nada)
   const enginesBefore = JSON.stringify(cfg.search.engines) + cfg.search.current;
   normalizeEngines(cfg.search);

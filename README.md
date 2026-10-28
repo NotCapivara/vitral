@@ -1,6 +1,6 @@
-# Nova Guia Soberana
+# Vitral
 
-Extensão para Brave/Chrome que troca a página de nova guia por uma tela limpa, em vidro, que cabe inteira na tela, sem rolagem.
+**Um redesign da nova guia do Brave (e do Chrome).** Em vez da página padrão, uma tela de vidro limpa, com relógio, busca, notícias das fontes que você escolher e o mercado do dia. Tudo cabe numa tela só, sem rolagem, e sem rastreamento.
 
 ![Nova guia com relógio, busca, citação, Mercado e Notícias](docs/captura.webp)
 

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Nova Guia Soberana",
+  "name": "Vitral",
   "version": "1.0.0",
-  "description": "Nova guia limpa e personalizável. Sem rastreamento nem telemetria; os dados de fora (notícias, cotações) só vêm do que você ativar.",
+  "description": "Sua nova guia em vidro: limpa, personalizável e com notícias e mercado. Sem rastreamento nem telemetria; os dados de fora (notícias, cotações) só vêm do que você ativar.",
   "chrome_url_overrides": {
     "newtab": "newtab.html"
   },

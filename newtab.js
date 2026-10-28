@@ -1,5 +1,6 @@
-/* Nova Guia Soberana — tudo local. A única rede é opcional: a busca de sites na janela
-   "Adicionar favoritos" (Wikidata + ícones do DuckDuckGo), que pode ser desligada. */
+/* Vitral — nova guia em vidro para Brave e Chrome. Configurações só no navegador e nenhuma
+   telemetria; a rede só é usada pelo que você liga (notícias, mercado, tradução, busca de sites),
+   e toda chamada passa por net(), sem cookies nem Referer. */
 'use strict';
 
 // ---------- Armazenamento (chrome.storage.local, com fallback p/ testes) ----------
@@ -873,7 +874,7 @@ function askPermission(urls) {
   const origins = [...new Set(urls.flatMap(originsFor))];
   return chrome.permissions.request({ origins })
     .then(ok => { if (!ok) toast('Permissão não concedida. Sem ela a fonte não pode ser lida.'); return ok; })
-    .catch(e => { console.warn('Nova Guia: permissão', e); toast('O navegador recusou o pedido: ' + (e && e.message || e)); return false; });
+    .catch(e => { console.warn('Vitral: permissão', e); toast('O navegador recusou o pedido: ' + (e && e.message || e)); return false; });
 }
 // aviso rápido no canto do painel
 function toast(text) {
@@ -2624,7 +2625,7 @@ const tabs = {
       ...ui.section('Backup',
         ui.action('download', 'Exportar', async () => {
           const blob = new Blob([JSON.stringify({ cfg, images: (await store.get('images')) || [] }, null, 2)], { type: 'application/json' });
-          const a = h('a', { href: URL.createObjectURL(blob), download: `nova-guia-${new Date().toISOString().slice(0, 10)}.json` });
+          const a = h('a', { href: URL.createObjectURL(blob), download: `vitral-${new Date().toISOString().slice(0, 10)}.json` });
           a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); // revogar na hora pode cancelar o download
         }),
         ui.action('upload', 'Importar', () => file.click()), file),

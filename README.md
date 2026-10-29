@@ -14,7 +14,8 @@
   - viés de cada fonte por cores
   - tradução automática
   - divisão igual entre as fontes
-  - filtro "Peneira", que tira propaganda e notícias só com manchete
+  - mesma notícia em várias fontes num cartão só (passe o mouse para ver todas as versões)
+  - filtro de assuntos (política, esportes, loterias, promoções…) e palavras bloqueadas
 - **Mercado**:
   - moedas, ações, FIIs, ETFs, cripto e commodities
   - maior alta e maior baixa do dia por país

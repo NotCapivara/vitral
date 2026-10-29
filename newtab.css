@@ -680,7 +680,13 @@ body.align-center #app { justify-content: safe center; }
 /* com "Mesma altura", cada cartão ocupa a linha inteira e o conteúdo se distribui */
 body.grid-stretch .grid > .card { display: flex; flex-direction: column; }
 body.grid-stretch .card.market .mk-list { flex: 1; justify-content: space-around; }
-body.grid-stretch .card.news .news-list { flex: 1; align-content: start; }
+body.grid-stretch .card.news .news-list { flex: 1; }
+/* sobra espaço no bloco (poucas notícias): as linhas se espalham até preencher tudo */
+.card.news { display: flex; flex-direction: column; }
+.card.news .news-list { flex: 1; align-content: space-between; }
+/* topo e rodapé nunca encolhem: com notícias demais para a altura travada, o topo era espremido e subia
+   (as fontes, "Notícias" e o atualizar), e o ajuste à tela achava que ainda cabia */
+.card.news > .news-head, .card.news > .news-foot { flex: none; }
 .mk-ch.flat { color: var(--muted); }
 .mk-badge { font-size: 10px; }
 
@@ -1032,3 +1038,42 @@ dialog.closing::backdrop { animation: backdrop-out .22s ease-in both; }
 body.grid-stretch .card.market .mk-list { align-content: space-around; }
 /* Troca de período (Dia, Semana, Mês, Ano): juros e inflação não mudam, então não apagam nem redesenham */
 .mk-list.switching > .fixed .spark *, .mk-list.dimmed > .fixed .spark * { animation: none !important; }
+/* "+N": a mesma notícia em outras fontes */
+.news-also {
+  flex: none; border: 0; padding: 1px 7px; border-radius: 999px; cursor: pointer;
+  font: inherit; font-weight: 600; color: var(--text); background: rgba(255, 255, 255, .1); transition: background .15s;
+}
+.news-also:hover { background: rgba(255, 255, 255, .2); }
+/* as versões saltam numa pilha vertical a partir da notícia (que fica no lugar), cada uma do tamanho dela */
+.news-pop { position: fixed; z-index: 70; display: flex; flex-direction: column; }
+.news-pop.closing { pointer-events: none; }
+.news-pop.closing .news-page { animation: page-close .3s var(--ease-out) both; animation-delay: calc(var(--i) * 30ms); }
+@keyframes page-close { to { opacity: 0; transform: translateY(var(--dy)) scale(.96); } }
+.news-page {
+  flex: none; min-height: var(--page-h); overflow: hidden; box-sizing: border-box;
+  background: rgba(26, 26, 30, .92); border: 1px solid rgba(255, 255, 255, .1);
+  backdrop-filter: blur(30px) saturate(1.6); -webkit-backdrop-filter: blur(30px) saturate(1.6);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .4);
+  animation: page-pop .4s var(--spring) both; animation-delay: calc(var(--i) * 50ms);
+}
+.news-page .news-sum { -webkit-line-clamp: var(--sum-lines, 4); }
+.news-pop.no-sum .news-sum { display: none; }
+.news-page.here { border-color: rgba(255, 255, 255, .22); }
+.news-page:hover { background: rgba(38, 38, 44, .94); }
+@keyframes page-pop { from { opacity: 0; transform: translateY(var(--dy)) scale(.96); } }
+@media (prefers-reduced-motion: reduce) { .news-page, .news-pop.closing .news-page { animation: none; } }
+
+/* filtro de assuntos: escondidas à mostra */
+.news-item.muted { opacity: .45; }
+.news-peek { border: 0; padding: 0; background: none; font: inherit; color: inherit; text-decoration: underline; cursor: pointer; }
+
+/* painel: menus que abrem e fecham (ver ui.folds) */
+button.row-item.fold-head { border: 0; background: transparent; cursor: pointer; }
+.fold-head > .ic:last-child { flex: none; display: grid; width: 18px; height: 18px; color: var(--p-muted); transition: transform .25s var(--ease-out); }
+.fold-head.on > .ic:last-child { transform: rotate(180deg); }
+.fold-head.on { background: rgba(255, 255, 255, .05); }
+.fold-body { display: flex; flex-direction: column; gap: 8px; padding-left: 10px; border-left: 2px solid rgba(255, 255, 255, .08); }
+/* a seta do menu recém-aberto gira (o título é redesenhado já aberto) */
+.fold-head.just > .ic:last-child { animation: chev-open .3s var(--ease-out); }
+@keyframes chev-open { from { transform: rotate(0); } }
+@media (prefers-reduced-motion: reduce) { .fold-head.just > .ic:last-child { animation: none; } }

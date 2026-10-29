@@ -106,7 +106,7 @@ const DEFAULTS = {
   notes: '',
   todos: [],
   countdown: { label: 'Halving', date: '2028-04-15' },
-  news: { enabled: {}, custom: [], bias: {}, cat: {}, count: 12, images: true, summary: true, showBias: true, translate: true, clean: true, maxAge: 7, refresh: 30 },
+  news: { enabled: {}, custom: [], bias: {}, cat: {}, count: 12, images: true, summary: true, showBias: true, translate: true, maxAge: 7, refresh: 30, topicsOff: {}, muteWords: '' },
   // ativos acompanhados no bloco Mercado (símbolos do Yahoo Finance)
   market: { symbols: [{ s: 'BRL=X', name: 'Dólar' }, { s: 'EURBRL=X', name: 'Euro' }, { s: 'BTC-BRL', name: 'Bitcoin' }, { s: '^BVSP', name: 'Ibovespa' }], range: '1d', spark: true, refresh: 5 },
   customCss: ''
@@ -501,13 +501,17 @@ function render() {
 function fitToScreen() {
   const app = $('#app'), card = $('.card.news'), list = card && card.querySelector('.news-list');
   if (!app) return;
-  app.style.setProperty('--fit-zoom', 1);
+  // bloco travado na troca de fonte: a página fica com o mesmo zoom e o mesmo Mercado de antes da troca
+  // (recalcular com o bloco já travado na altura cheia encolhia a página toda e ela "subia")
+  const locked = card && card.dataset.lockH;
+  app.style.setProperty('--fit-zoom', locked ? card.dataset.lockZoom || 1 : 1);
   const market = $('.card.market');
-  if (market) market.dataset.fit = 0;
+  if (market) market.dataset.fit = locked ? card.dataset.lockMk || 0 : 0;
   const overScreen = () => app.scrollHeight > app.clientHeight + 1;
   // o resto da página (sem notícias) precisa caber: o Mercado se compacta e, se ainda faltar,
   // a página inteira encolhe um pouco (até 70%)
   const fitBase = () => {
+    if (locked) return;
     if (market) for (let lv = 1; lv <= 2 && overScreen(); lv++) market.dataset.fit = lv;
     for (let z = 95; z >= 70 && overScreen(); z -= 5) app.style.setProperty('--fit-zoom', z / 100);
   };
@@ -519,7 +523,8 @@ function fitToScreen() {
   const order = all.slice().sort((a, b) => (+a.dataset.rank || 0) - (+b.dataset.rank || 0) || (+b.dataset.date || 0) - (+a.dataset.date || 0));
   const sources = new Set(all.map(i => i.dataset.src)).size;
   card.style.height = card.dataset.lockH ? card.dataset.lockH + 'px' : '';
-  const show = k => order.forEach((i, n) => { i.hidden = n >= k; });
+  card.style.minHeight = '';
+  const show =k => order.forEach((i, n) => { i.hidden = n >= k; });
 
   // sem notícias, a página cabe? (se nem assim, aceita o que não aumentar a página)
   show(0); card.dataset.fit = 0;
@@ -553,6 +558,10 @@ function fitToScreen() {
   const cols = getComputedStyle(list).gridTemplateColumns.split(' ').length;
   for (const it of order.slice(k)) { if (k % cols === 0) break; it.hidden = false; if (fits()) k++; else it.hidden = true; }
   if (k % cols && k > cols) order.filter(i => !i.hidden).slice(k - k % cols).forEach(i => { i.hidden = true; });
+  // poucas notícias (ex.: uma fonte só): o bloco ocupa o resto da tela e as linhas se espalham por ele
+  // (ver .news-list no CSS); com altura travada pela troca de fonte, o espaço já é o do bloco
+  const spare = app.clientHeight - app.scrollHeight;
+  if (!card.dataset.lockH && spare > 0) card.style.minHeight = card.offsetHeight + spare + 'px';
 }
 let fitTimer;
 const fitSoon = () => { cancelAnimationFrame(fitTimer); fitTimer = requestAnimationFrame(fitToScreen); };
@@ -1007,6 +1016,47 @@ function parseFeed(text, src) {
   }).filter(it => it.title && it.link);
 }
 
+// foto de capa (og:image) da página da notícia, para feeds que não trazem foto (ex.: Jovem Pan, Terra Brasil).
+// Lê só até o fim do <head> e corta o download, para gastar pouco.
+async function ogImage(url) {
+  if (!(await covered(url))) return '';
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 10000);
+  try {
+    const r = await net(url, { signal: ctl.signal });
+    if (!r.ok || !r.body) return '';
+    const rd = r.body.getReader(), dec = new TextDecoder();
+    let html = '';
+    while (html.length < 500000 && !/<\/head>|<body\b/i.test(html)) { const { done, value } = await rd.read(); if (done) break; html += dec.decode(value, { stream: true }); }
+    ctl.abort();
+    const u = (parseHtml(html).querySelector('meta[property="og:image"], meta[name="og:image"], meta[name="twitter:image"], meta[property="twitter:image"]') || {}).content || '';
+    return u ? httpUrl(new URL(u.trim(), url).href) : '';
+  } catch { return ''; } finally { clearTimeout(t); }
+}
+
+// a mesma imagem em várias notícias da mesma fonte é a capa padrão do site (logotipo), não foto da notícia
+function dropLogos(items) {
+  const key = it => it.source + ' ' + it.image.split(/[?#]/)[0], n = {};
+  for (const it of items) if (it.image) n[key(it)] = (n[key(it)] || 0) + 1;
+  for (const it of items) if (it.image && n[key(it)] > 1) it.image = '';
+}
+// fotos que faltam: chegam depois das notícias já estarem na tela e entram no lugar, sem redesenhar o bloco
+async function fillPhotos(data) {
+  const need = data.items.filter(it => !it.image && !it.ogTried);
+  if (!need.length) return;
+  await Promise.all(need.map(async it => { it.image = await ogImage(it.link); it.ogTried = true; }));
+  dropLogos(data.items);
+  if (((await store.get('news')) || {}).at !== data.at) return; // já veio uma atualização mais nova
+  await store.set('news', data);
+  const byLink = new Map(data.items.map(it => [it.link, it]));
+  for (const a of document.querySelectorAll('.card.news a.news-item')) {
+    const it = byLink.get(a.getAttribute('href')), img = a.querySelector('.news-img');
+    if (!it) continue;
+    if (it.image && !img && cfg.news.images) a.append(newsImg(it));
+    else if (!it.image && img) img.remove();
+  }
+  fitSoon();
+}
+
 // é um feed? devolve o título dele
 function feedInfo(text) {
   if (!/<(rss|feed|rdf:RDF)[\s>]/i.test(text.slice(0, 2000))) return null;
@@ -1212,24 +1262,16 @@ const newsKey = srcs => srcs.map(s => s.url).join('|');
 
 let newsJob = null;
 // sobe quando a forma de ler os feeds muda: as notícias guardadas são lidas de novo
-const NEWS_V = 7;
+const NEWS_V = 8;
 
-// ---------- Peneira: filtro de qualidade — sem propaganda, sem "só manchete", sem notícia velha ----------
-// no título só sinais fortes ("oferta de ações" e "ofertas de demissão" são notícia de verdade)
-const PROMO_TITLE = /(^|[^\p{L}])(cupo(m|ns)( de desconto)?|economize|black friday|cashback|frete grátis|liquidação|publieditorial|conteúdo patrocinado|sponsored)(?![\p{L}])|^(promoção|promo|oferta|ofertas|desconto|descontos|cupom)\b/iu;
-const PROMO_PRICE = /\d+\s?%\s?(off|de desconto)|R\$\s?[\d.,]+\s?off|até\s+\d+\s?%/i;
-// nas categorias do feed, a marcação explícita de conteúdo pago
-const PROMO_CAT = /(^|[^\p{L}])(patrocinad[oa]s?|publieditorial|publicidade|conteúdo de marca|branded content|informe publicitário|sponsored|cupons?|ofertas)(?![\p{L}])/iu;
-const PROMO_PATH = /\/(cupons?|ofertas?|promocoes|promocao|guia-de-compras|compras|achadinhos|patrocinado|publieditorial|publicidade|branded|brand-studio|parceiros?|afiliados?|sponsored|deals|coupons)(\/|$)/i;
-const INDEX_PATH = /\/(tudo-sobre|tags?|topicos?|horoscopo[\w-]*|fora-de-ultimas)(\/|$)/i;
-// motivo para esconder (texto vazio = notícia boa)
+// ---------- Lixo do feed: sempre fora (página de índice, só manchete, data no futuro) ----------
+// Propaganda e compras não ficam aqui: são o assunto "Promoções e compras" (ver TOPICS), que dá para ligar
+const INDEX_PATH = /\/(tudo-sobre|tags?|topicos?|fora-de-ultimas)(\/|$)/i;
+// motivo para descartar (texto vazio = notícia boa)
 function junkReason(it) {
   let path = '';
   try { path = new URL(it.link).pathname; } catch {}
-  if (PROMO_PATH.test(path)) return 'seção de compras/patrocínio';
   if (INDEX_PATH.test(path)) return 'página de índice';
-  if (PROMO_TITLE.test(it.title) || PROMO_PRICE.test(it.title)) return 'título promocional';   // "Promoção Adidas: economize até 60%"
-  if ((it.cats || []).some(c => PROMO_CAT.test(c))) return 'categoria patrocinada';
   if ((!it.summary || it.summary.length < 40) && !it.image) return 'só manchete';               // sem resumo nem foto
   if (it.date && it.date - Date.now() > 864e5) return 'data no futuro';                          // ex.: "Ao vivo" agendado
   return '';
@@ -1263,16 +1305,22 @@ async function loadNews(force) {
     // se ainda falhou, mantém as notícias que essa fonte já tinha
     const kept = name => cache.key === key ? (cache.items || []).filter(it => it.source === name) : [];
     const seen = new Set();
-    let items = res.flatMap((r, i) => r.status === 'fulfilled' ? r.value.filter(it => !cfg.news.clean || isGoodNews(it)).sort((a, b) => b.date - a.date).slice(0, 15) : kept(srcs[i].name))
+    let items = res.flatMap((r, i) => r.status === 'fulfilled' ? r.value.filter(isGoodNews).sort((a, b) => b.date - a.date).slice(0, 15) : kept(srcs[i].name))
       .filter(it => !seen.has(it.link) && seen.add(it.link))
       .sort((a, b) => b.date - a.date);
     // se tudo falhou (ex.: sem internet), mantém as notícias que já estavam
     if (!items.length && cache.key === key) items = cache.items || [];
+    // notícia sem foto no feed: a capa que já foi buscada na página dela vem do cache (as que faltam, em fillPhotos)
+    dropLogos(items);
+    const prev = new Map((cache.items || []).map(it => [it.link, it]));
+    for (const it of items) { const p = prev.get(it.link); if (!it.image && p && p.ogTried) Object.assign(it, { image: p.image, ogTried: true }); }
+    dropLogos(items);
     // sem limite geral: cortar as N mais recentes de todas as fontes apagava as fontes mais lentas
     // (ex.: Visão Libertária, que só informa a data). Cada fonte já entra com no máximo 15.
     if (cfg.news.translate) await translateItems(items, cache.stale ? {} : cache);
     const data = { v: NEWS_V, key, at: Date.now(), items, failed };
     await store.set('news', data);
+    if (cfg.news.images) fillPhotos(data);
     return data;
   })().finally(() => { newsJob = null; });
   return newsJob;
@@ -1416,6 +1464,172 @@ function calmSentence(text) {
   const orig = text.split(/(\s+)/);
   return out.split(/(\s+)/).map((w, n) => KEEP_CAPS.has((orig[n] || '').replace(/[^\p{L}\d]/gu, '')) ? orig[n] : w).join('');
 }
+function newsImg(it) {
+  const img = h('img', { class: 'news-img', src: it.image, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' });
+  watchImage(img);
+  return img;
+}
+// mesma notícia em fontes diferentes: títulos com quase as mesmas palavras, publicados com até 2 dias de diferença.
+// Devolve, para cada notícia, o grupo dela (a mais nova primeiro; no máximo uma por fonte)
+const SAME_STOP = new Set('das dos nas nos uma uns por pra para pela pelo pelos pelas com sem que nao sobre apos diz dizem como mais entre ate sao ser foi tem the and for with from'.split(' '));
+const titleWords = t => new Set((t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().match(/[a-z0-9]{3,}/g) || []).filter(w => !SAME_STOP.has(w)));
+// Dois testes; basta um:
+// 1. títulos com quase as mesmas palavras;
+// 2. título + começo do resumo, com peso pela raridade: "Eduardo", "Olavo", "foto" contam mais que "Flávio"
+//    ou "Brasil", que aparecem em metade das notícias do dia. Palavras cortadas em 6 letras (publica = publicou).
+//    O corte de 0,45 veio das notícias reais: abaixo dele já juntava Quina com Mega-Sena.
+//    E os títulos também precisam dividir 2+ palavras com peso: resumos que só repetem quem é a pessoa
+//    ("O senador Rogério Marinho (PL-RN), coordenador da campanha…") juntavam declarações diferentes dela.
+const stemWords = s => [...titleWords(s || '')].map(w => w.slice(0, 6));
+function groupSame(items) {
+  const words = new Map(items.map(it => [it, titleWords(it.orig ? it.orig.title : it.title)]));
+  const bag = new Map(items.map(it => [it, new Set([...stemWords(it.orig ? it.orig.title : it.title),
+    ...stemWords(((it.orig ? it.orig.summary : it.summary) || '').split(/\s+/).slice(0, 30).join(' '))])]));
+  const df = {};
+  for (const s of bag.values()) for (const w of s) df[w] = (df[w] || 0) + 1;
+  const idf = w => Math.log(items.length / df[w]);
+  const sum = s => [...s].reduce((a, w) => a + idf(w), 0);
+  const weight = new Map([...bag].map(([it, s]) => [it, sum(s)]));
+  const tstem = new Map(items.map(it => [it, new Set(stemWords(it.orig ? it.orig.title : it.title))]));
+  const like = (a, b) => {
+    const x = words.get(a), y = words.get(b); let k = 0;
+    for (const w of x) if (y.has(w)) k++;
+    if (k >= 3 && k >= .6 * Math.min(x.size, y.size)) return true;
+    const ta = tstem.get(a), tb = tstem.get(b), tShared = [...ta].filter(w => tb.has(w));
+    if (tShared.length < 2 || sum(tShared) < .3 * Math.min(sum(ta), sum(tb))) return false;
+    const p = bag.get(a), q = bag.get(b); let s = 0, n = 0;
+    for (const w of p) if (q.has(w)) { s += idf(w); n++; }
+    return n >= 5 && s >= .45 * Math.min(weight.get(a), weight.get(b));
+  };
+  const groups = [];
+  for (const it of items) {
+    const g = groups.find(g => !g.some(x => x.source === it.source) && Math.abs((g[0].date || 0) - (it.date || 0)) < 1728e5 && g.some(x => like(x, it)));
+    if (g) g.push(it); else groups.push([it]);
+  }
+  return new Map(groups.flatMap(g => g.map(it => [it, g])));
+}
+// mesma notícia em várias fontes: as outras versões saltam numa pilha vertical a partir da notícia, que
+// fica parada no lugar (abaixo dela; o que não couber na tela, acima). Abrem com o mouse em qualquer parte
+// da notícia (ou tocando no +N) e fecham meio segundo depois que o mouse sai da pilha
+let popTimer = 0;
+// fecha voltando as folhas para dentro da notícia (o caminho inverso da abertura)
+const closePop = p => {
+  if (!p || p.classList.contains('closing')) return;
+  p.classList.add('closing');
+  setTimeout(() => p.remove(), 400);
+};
+const closePopSoon = () => { clearTimeout(popTimer); popTimer = setTimeout(() => closePop($('.news-pop:not(.closing)')), 500); };
+function sameStoryPop(anchor, group, orig, biasBy, iconBy) {
+  clearTimeout(popTimer);
+  const old = $('.news-pop:not(.closing)');
+  if (old && old.owner === anchor) return;
+  document.querySelectorAll('.news-pop').forEach(closePop); // a pilha anterior fecha com animação, sempre
+  const n = cfg.news;
+  // a original fica parada embaixo do mouse; as outras versões descem abaixo dela e, as que não
+  // couberem na tela, sobem acima (assim nada se mexe sob o cursor)
+  const r = anchor.getBoundingClientRect(), cs = getComputedStyle(anchor), GAP = 6, step = r.height + GAP;
+  const others = group.filter(x => x !== orig);
+  const fitBelow = Math.max(0, Math.floor((innerHeight - 12 - r.bottom) / step));
+  const below = others.slice(0, fitBelow), above = others.slice(fitBelow).reverse();
+  const list = [...above, orig, ...below], mid = above.length;
+  const pop = h('div', { class: 'news-pop', role: 'dialog', 'aria-label': 'A mesma notícia em outras fontes' }, list.map((it, i) => {
+    const b = n.showBias ? biasBy[it.source] : null;
+    const summary = calmCaps(it.tr && n.translate ? it.summary : (it.orig ? it.orig.summary : it.summary));
+    return h('a', { class: 'news-item news-page' + (it === orig ? ' here' : ''), href: it.link, style: `--i:${Math.abs(i - mid)}` },
+      h('div', { class: 'news-body' },
+        h('div', { class: 'news-meta' }, srcIcon(it.site, iconBy[it.source]), h('span', {}, it.source),
+          b != null ? h('span', { class: 'bias-pip', style: `--c:${BIAS[b].color}`, title: BIAS[b].label }) : null,
+          it.date ? h('span', {}, '· ' + ago(it.date)) : null),
+        h('div', { class: 'news-title' }, calmCaps(it.tr && n.translate ? it.title : (it.orig ? it.orig.title : it.title))),
+        n.summary && summary ? h('div', { class: 'news-sum' }, summary) : null),
+      n.images && it.image ? newsImg(it) : null);
+  }));
+  pop.owner = anchor;
+  pop.addEventListener('pointerenter', () => clearTimeout(popTimer));
+  pop.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') closePopSoon(); });
+  // cada versão com a largura, a altura (no mínimo), a letra e a foto da notícia
+  Object.assign(pop.style, { width: r.width + 'px', left: r.left + 'px', fontSize: cs.fontSize, gap: GAP + 'px' });
+  pop.style.setProperty('--news-img', cs.getPropertyValue('--news-img'));
+  pop.style.setProperty('--page-h', r.height + 'px');
+  // resumo com as mesmas linhas que a notícia mostra (senão a folha corta o texto no meio da linha)
+  // (o bloco compacto esconde o resumo: aí as folhas também ficam sem)
+  const sum = anchor.querySelector('.news-sum'), sumH = sum ? sum.getBoundingClientRect().height : 0;
+  pop.style.setProperty('--sum-lines', sumH ? Math.max(1, Math.round(sumH / parseFloat(getComputedStyle(sum).lineHeight))) : 0);
+  if (!sumH) pop.classList.add('no-sum');
+  // cada folha sai de cima da notícia até o seu lugar (--dy, calculado abaixo)
+  document.body.append(pop);
+  // versão com título maior que o da original cresce o que precisar (nada cortado); a pilha é posta
+  // pelas alturas reais, para a original continuar exatamente no lugar dela
+  const kids = [...pop.children], hs = kids.map(k => k.offsetHeight);
+  let y = r.top - hs.slice(0, mid).reduce((a, x) => a + x + GAP, 0);
+  pop.style.top = y + 'px';
+  kids.forEach((k, i) => { k.style.setProperty('--dy', r.top - y + 'px'); y += hs[i] + GAP; });
+  const close = e => {
+    if (!pop.isConnected) return removeEventListener('pointerdown', close, true), removeEventListener('keydown', close, true);
+    if (e.type === 'keydown' ? e.key !== 'Escape' : pop.contains(e.target) || anchor.contains(e.target)) return;
+    closePop(pop);
+  };
+  addEventListener('pointerdown', close, true); addEventListener('keydown', close, true);
+}
+// ---------- Assuntos: filtro do que você quer ou não ver ----------
+// O assunto vem, em ordem de confiança, da seção no endereço (/esportes/), da categoria do feed e,
+// se nenhuma das duas disser nada, de palavras do título. Loterias, horóscopo e promoções têm palavras
+// tão específicas que o título sempre conta. Tudo sem acento e em minúsculas (ver fold).
+const fold = s => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const TOPICS = {
+  politica: { name: 'Política', path: /\/(politica|eleicoes|poder|congresso|governo)(\/|$)/, cat: /\b(politica|eleicoes|congresso|governo)\b/,
+    title: /\b(lula|bolsonaro|senador|senado|deputad[oa]s?|congresso|ministr[oa]|stf|tse|eleica?o|eleicoes|candidat[oa]|governador|prefeit[oa]|planalto|pec)\b/ },
+  economia: { name: 'Economia', path: /\/(economia|mercado|negocios|financas|investimentos|dinheiro)(\/|$)/, cat: /\b(economia|mercados?|negocios|financas|investimentos)\b/,
+    title: /\b(dolar|ibovespa|bolsa de valores|inflacao|selic|juros|pib|ipca|imposto|petrobras|copom)\b/ },
+  mundo: { name: 'Mundo', path: /\/(internacional|mundo|world)(\/|$)/, cat: /\b(internacional|mundo)\b/,
+    title: /\b(eua|trump|china|russia|putin|ucrania|israel|gaza|venezuela|maduro|argentina|milei|europa|onu)\b/ },
+  justica: { name: 'Justiça e polícia', path: /\/(policia|justica|seguranca|crime|cidades\/policia)(\/|$)/, cat: /\b(policia|justica|seguranca|crimes?)\b/,
+    title: /\b(policia|pres[oa]s?|prisao|crime|assassin\w*|homicidio|tiroteio|estupro|trafic\w*|pf|delegacia)\b/ },
+  esportes: { name: 'Esportes', path: /\/(esportes?|futebol|sports?)(\/|$)/, cat: /\b(esportes?|futebol|formula 1|copa)\b/,
+    title: /\b(futebol|brasileirao|libertadores|flamengo|corinthians|palmeiras|vasco|gremio|cruzeiro|botafogo|fluminense|formula 1|nba|tenis|olimpiad\w*)\b/ },
+  loterias: { name: 'Loterias', strong: true, path: /\/(loterias?|mega-sena|quina|lotofacil)(\/|$)/, cat: /\bloterias?\b/,
+    title: /\b(mega-?sena|quina|lotofacil|lotomania|timemania|dupla sena|dia de sorte|milionaria|loterias?|dezenas sorteadas)\b/ },
+  famosos: { name: 'Famosos e TV', path: /\/(entretenimento|famosos|celebridades|televisao|novelas?|bbb|gente|tv)(\/|$)/, cat: /\b(entretenimento|famosos|celebridades|televisao|novelas?|reality)\b/,
+    title: /\b(bbb|big brother|novela|reality|influenciador\w*|cantor\w*|atriz|ator|famos[oa]s?)\b/ },
+  saude: { name: 'Saúde', path: /\/(saude|bem-estar|medicina)(\/|$)/, cat: /\b(saude|bem-estar|medicina)\b/,
+    title: /\b(saude|cancer|vacinas?|sus|doencas?|dengue|covid|hospita\w*|medic[oa]s?)\b/ },
+  ciencia: { name: 'Ciência e tecnologia', path: /\/(tecnologia|ciencia|tech|games|inovacao)(\/|$)/, cat: /\b(tecnologia|ciencia|games|inovacao)\b/,
+    title: /\b(inteligencia artificial|ia|iphone|android|apple|google|microsoft|openai|chatgpt|nasa|cientistas)\b/ },
+  clima: { name: 'Clima e tempo', path: /\/(clima|meteorologia|previsao-do-tempo|tempo)(\/|$)/, cat: /\b(clima|meteorologia|previsao do tempo)\b/,
+    title: /\b(chuvas?|temporal|frente fria|onda de calor|inmet|previsao do tempo|ciclone|tempestade|granizo)\b/ },
+  horoscopo: { name: 'Horóscopo', strong: true, path: /\/(horoscopo|astrologia|signos)(\/|$)/, cat: /\b(horoscopo|astrologia|signos?)\b/,
+    title: /\b(horoscopo|signos?|astrolog\w*|taro)\b/ },
+  // regras vindas da antiga Peneira. No título só sinais fortes: "oferta"/"desconto" só no começo
+  // ("oferta de ações" e "ofertas de demissão" são notícia de verdade); preço com desconto ("até 60%", "R$ 50 off")
+  promocoes: { name: 'Promoções e compras', strong: true,
+    path: /\/(cupons?|ofertas?|promocoes|promocao|guia-de-compras|compras|achadinhos|black-friday|patrocinado|publieditorial|publicidade|branded|brand-studio|parceiros?|afiliados?|sponsored|deals|coupons)(\/|$)/,
+    cat: /(^|[^\p{L}])(patrocinad[oa]s?|publieditorial|publicidade|conteudo de marca|branded content|informe publicitario|sponsored|cupons?|ofertas|compras)(?![\p{L}])/u,
+    title: /(^|[^\p{L}])(cupo(m|ns)( de desconto)?|economize|black friday|cashback|frete gratis|liquidacao|publieditorial|conteudo patrocinado|sponsored)(?![\p{L}])|^(promocao|promo|oferta|ofertas|desconto|descontos|cupom)\b|\d+\s?%\s?(off|de desconto)|r\$\s?[\d.,]+\s?off|ate\s+\d+\s?%/u },
+  servicos: { name: 'Trânsito e serviços', path: /\/(transito|servicos|concursos?|empregos?)(\/|$)/, cat: /\b(transito|servicos|concursos?|empregos?)\b/,
+    title: /\b(transito|interdica\w*|rodizio|concurso publico|inscricoes|inss|fgts|restituicao|bolsa familia)\b/ }
+};
+const topicMemo = new WeakMap();
+function topicsOf(it) {
+  if (topicMemo.has(it)) return topicMemo.get(it);
+  let path = '';
+  try { path = fold(decodeURIComponent(new URL(it.link).pathname)); } catch {}
+  const cats = fold((it.cats || []).join(' | ')), title = fold(it.orig ? it.orig.title : it.title);
+  const keys = Object.keys(TOPICS);
+  let found = keys.filter(k => TOPICS[k].path.test(path) || TOPICS[k].cat.test(cats));
+  found = [...new Set([...found, ...keys.filter(k => (TOPICS[k].strong || !found.length) && TOPICS[k].title.test(title))])];
+  topicMemo.set(it, found);
+  return found;
+}
+// motivo para esconder (assunto desligado ou palavra bloqueada); '' = mostra
+function hiddenWhy(it) {
+  const n = cfg.news, off = n.topicsOff || {};
+  const t = topicsOf(it).find(k => off[k]);
+  if (t) return TOPICS[t].name;
+  const title = fold(it.orig ? it.orig.title : it.title);
+  const w = (n.muteWords || '').split(/[,\n]/).map(s => fold(s).trim()).filter(Boolean).find(w => title.includes(w));
+  return w ? `"${w}"` : '';
+}
+let newsPeek = false; // mostrando as escondidas (só nesta guia)
 let newsFilter = ''; // fonte escolhida nos filtros (só nesta guia)
 let newsSwitch = false; // a próxima pintura vem de uma troca de fonte (anima a lista)
 const pillAt = {}; // onde estava o destaque de cada barra de filtros, para deslizar até o novo
@@ -1426,15 +1640,18 @@ function paintNews(card, data) {
     card.replaceChildren(head, h('div', { class: 'news-empty' },
       h('span', {}, 'Escolha de onde vêm suas notícias.'),
       h('button', { type: 'button', onclick: () => {
-        togglePanel(true); openTab('blocos');
+        foldOpen.news = 'src'; togglePanel(true); openTab('blocos');
         // rola só o painel (scrollIntoView rolaria a página inteira junto)
         const body = $('#panel-body'), target = $('#news-settings');
         if (target) body.scrollTo({ top: target.offsetTop - body.offsetTop - 8, behavior: 'smooth' });
       } }, 'Escolher fontes')));
     return;
   }
-  data = { ...data, items: (data.items || []).filter(recentEnough) };
-  const names = [...new Set(data.items.map(it => it.source))];
+  // filtro de assuntos e palavras bloqueadas (só na hora de mostrar: religar traz tudo de volta na hora)
+  const raw = data, recent = (data.items || []).filter(recentEnough);
+  const hiddenN = recent.filter(it => hiddenWhy(it)).length;
+  data = { ...data, items: newsPeek ? recent : recent.filter(it => !hiddenWhy(it)) };
+  const names =[...new Set(data.items.map(it => it.source))];
   if (newsFilter && !names.includes(newsFilter)) newsFilter = '';
   if (names.length > 1) {
     const chips = h('div', { class: 'news-chips' });
@@ -1447,12 +1664,22 @@ function paintNews(card, data) {
         onclick: () => {
           if (newsFilter === nm) return;
           // a altura do bloco fica a mesma ao trocar de fonte (só muda o que está dentro)
-          if (!card.dataset.lockH) card.dataset.lockH = card.offsetHeight;
-          newsFilter = nm; newsSwitch = true; paintNews(card, data);
+          if (!card.dataset.lockH) Object.assign(card.dataset, { lockH: card.offsetHeight,
+            lockZoom: getComputedStyle($('#app')).getPropertyValue('--fit-zoom').trim() || 1, lockMk: ($('.card.market') || { dataset: {} }).dataset.fit || 0 });
+          newsFilter = nm; newsSwitch = true; paintNews(card, raw);
         }
       }, nm ? srcIcon(site, savedIcon[nm]) : allIcon(), h('span', { class: 'chip-name' }, nm || 'Tudo')));
     }
     head.append(chips);
+    // o topo novo já nasce com o mesmo encaixe do anterior (uma ou duas linhas, recuos), senão ele
+    // aparece por um instante numa linha só e pula para duas a cada troca de fonte
+    const prev = card.querySelector('.news-chips');
+    if (prev) {
+      Object.assign(chips.dataset, { fit: prev.dataset.fit || 0, shape: prev.dataset.shape || '' });
+      chips.style.paddingInline = prev.style.paddingInline;
+      const starts = new Set([...prev.querySelectorAll('button.line-start')].map(b => b.title));
+      chips.querySelectorAll('button').forEach(b => b.classList.toggle('line-start', starts.has(b.title)));
+    }
     fitChips(chips, 'news');
   }
   const btn = h('button', { type: 'button', class: 'news-refresh' + (data.loading ? ' spin' : ''), title: 'Atualizar' }, icon('reset'));
@@ -1464,7 +1691,9 @@ function paintNews(card, data) {
   else {
     // vêm notícias a mais do que cabem: fitToScreen mostra quantas couberem, em rodízio entre as fontes
     const POOL = 42;
-    const items = newsFilter ? data.items.filter(it => it.source === newsFilter).slice(0, POOL) : balance(data.items, POOL);
+    // a mesma notícia em várias fontes vira um cartão só (a versão mais nova), com "+N" para ver as outras
+    const groupOf = groupSame(data.items);
+    const items = newsFilter ? data.items.filter(it => it.source === newsFilter).slice(0, POOL) : balance(data.items.filter(it => groupOf.get(it)[0] === it), POOL);
     // cor do viés de cada fonte (calculada agora: a nota pode ter mudado depois de guardar as notícias)
     const biasBy = {}, iconBy = {};
     for (const s of newsSources()) { biasBy[s.name] = biasOf(s); iconBy[s.name] = s.icon; }
@@ -1477,14 +1706,21 @@ function paintNews(card, data) {
       const showTr = it.tr && n.translate;
       const title = calmCaps(showTr ? it.title : (it.orig ? it.orig.title : it.title));
       const summary = calmCaps(showTr ? it.summary : (it.orig ? it.orig.summary : it.summary));
-      const img = n.images && it.image ? h('img', { class: 'news-img', src: it.image, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : null;
-      if (img) watchImage(img);
-      return h('a', { class: 'news-item', href: it.link, 'data-rank': rankOf.get(it), 'data-date': it.date || 0, 'data-src': it.source },
+      const img = n.images && it.image ? newsImg(it) : null;
+      const group = groupOf.get(it), others = group.filter(x => x !== it);
+      const pages = others.length ? {
+        onpointerenter: e => { if (e.pointerType !== 'mouse') return; const a = e.currentTarget; clearTimeout(popTimer); popTimer = setTimeout(() => sameStoryPop(a, group, it, biasBy, iconBy), 250); },
+        onpointerleave: e => { if (e.pointerType === 'mouse') closePopSoon(); } } : {};
+      const why = newsPeek && hiddenWhy(it);
+      return h('a', { class: 'news-item' + (why ? ' muted' : ''), href: it.link, 'data-rank': rankOf.get(it), 'data-date': it.date || 0, 'data-src': it.source, ...pages },
         h('div', { class: 'news-body' },
           h('div', { class: 'news-meta' }, srcIcon(it.site, iconBy[it.source]), h('span', {}, it.source),
             b != null ? h('span', { class: 'bias-pip', style: `--c:${BIAS[b].color}`, title: BIAS[b].label }) : null,
             it.date ? h('span', {}, '· ' + ago(it.date)) : null,
-            showTr ? h('span', { class: 'tr-tag', title: 'Original: ' + it.orig.title }, '· traduzido') : null),
+            showTr ? h('span', { class: 'tr-tag', title: 'Original: ' + it.orig.title }, '· traduzido') : null,
+            why ? h('span', { class: 'tr-tag' }, '· escondida: ' + why) : null,
+            others.length ? h('button', { type: 'button', class: 'news-also', 'aria-label': 'Também em: ' + others.map(x => x.source).join(', '),
+              onclick: e => { e.preventDefault(); e.stopPropagation(); sameStoryPop(e.currentTarget.closest('.news-item'), group, it, biasBy, iconBy); } }, '+' + others.length) : null),
           h('div', { class: 'news-title' }, title),
           n.summary && summary ? h('div', { class: 'news-sum' }, summary) : null),
         img);
@@ -1495,7 +1731,10 @@ function paintNews(card, data) {
     body.classList.add('switching');
     [...body.children].forEach((el, i) => el.style.setProperty('--i', i));
   }
-  const foot = data.failed && data.failed.length ? h('div', { class: 'news-foot' }, 'Não carregou: ' + data.failed.join(', ')) : null;
+  const failed = data.failed && data.failed.length ? h('span', {}, 'Não carregou: ' + data.failed.join(', ')) : null;
+  const peek = hiddenN ? h('button', { type: 'button', class: 'news-peek', onclick: () => { newsPeek = !newsPeek; paintNews(card, raw); } },
+    newsPeek ? 'Esconder de novo' : `${hiddenN} ${hiddenN === 1 ? 'escondida' : 'escondidas'} pelos seus filtros`) : null;
+  const foot = failed || peek ? h('div', { class: 'news-foot' }, failed, failed && peek ? ' · ' : null, peek) : null;
   // replaceChildren escreveria "null" na tela se o rodapé não existir
   card.replaceChildren(...[head, body, foot].filter(Boolean));
   fitSoon();
@@ -1634,31 +1873,33 @@ function newsSettings() {
     }
   });
 
+  const muted = Object.keys(TOPICS).filter(k => (n.topicsOff || {})[k]).length + (n.muteWords.trim() ? 1 : 0);
   return [
     h('h5', { id: 'news-settings' }, 'Notícias'),
-    h('div', { class: 'group' }, ui.action('plus', 'Adicionar fonte', openSourcePicker, 'accent')),
-    mix ? h('div', { class: 'group' }, mix) : null,
-    h('label', { class: 'pick-search news-search' }, icon('search'), q),
-    listWrap,
-    ui.note('A nota de viés de cada veículo brasileiro é uma estimativa inicial feita pelo Claude a partir da linha editorial pública; toque nos pontos para dar a sua.'),
-    ...ui.section('Exibição',
-      ui.toggle('image', 'Imagens', 'news.images'),
-      ui.toggle('text', 'Resumo', 'news.summary'),
-      ui.toggle('globe', 'Traduzir notícias em inglês', 'news.translate', () => { if (cfg.news.translate) { const c = $('.card.news'); if (c) fillNews(c, true); } }),
-      // "Peneira": o filtro de qualidade das notícias (ver junkReason)
-      (() => {
-        const r = ui.toggle('sieve', 'Peneira', 'news.clean', () => { const c = $('.card.news'); if (c) fillNews(c, true); });
-        r.querySelector('.lbl').replaceWith(h('div', { class: 'two' }, h('span', { class: 'lbl' }, 'Peneira'),
-          h('span', { class: 'sub' }, 'Tira propaganda, cupons e notícias só com manchete')));
-        return r;
-      })(),
-      ui.slider('calendar', 'Notícias de até (dias)', 'news.maxAge', 1, 30, 1),
-      ui.toggle('sliders', 'Cor do viés nas notícias', 'news.showBias'),
-      ui.segRow('reset', 'Atualizar', 'news.refresh', [[15, '15 min'], [30, '30 min'], [60, '1 h']])),
-    ui.note('O bloco mostra quantas notícias couberem, divididas igualmente entre as fontes. A tradução usa o tradutor do navegador quando disponível; senão, o Google Tradutor (só título e resumo são enviados).')
+    ...ui.folds('news', [
+      ['src', 'news', 'Fontes', `${newsSources().length} ligadas`, () => [
+        h('div', { class: 'group' }, ui.action('plus', 'Adicionar fonte', openSourcePicker, 'accent')),
+        mix ? h('div', { class: 'group' }, mix) : null,
+        h('label', { class: 'pick-search news-search' }, icon('search'), q),
+        listWrap,
+        ui.note('A nota de viés de cada veículo brasileiro é uma estimativa inicial feita pelo Claude a partir da linha editorial pública; toque nos pontos para dar a sua.')]],
+      ['show', 'sliders', 'Exibição', 'Imagens, resumo, tradução, atualização', () => [
+        ...ui.section('',
+          ui.toggle('image', 'Imagens', 'news.images'),
+          ui.toggle('text', 'Resumo', 'news.summary'),
+          ui.toggle('globe', 'Traduzir notícias em inglês', 'news.translate', () => { if (cfg.news.translate) { const c = $('.card.news'); if (c) fillNews(c, true); } }),
+          ui.slider('calendar', 'Notícias de até (dias)', 'news.maxAge', 1, 30, 1),
+          ui.toggle('sliders', 'Cor do viés nas notícias', 'news.showBias'),
+          ui.segRow('reset', 'Atualizar', 'news.refresh', [[15, '15 min'], [30, '30 min'], [60, '1 h']])),
+        ui.note('O bloco mostra quantas notícias couberem, divididas igualmente entre as fontes. A tradução usa o tradutor do navegador quando disponível; senão, o Google Tradutor (só título e resumo são enviados).')]],
+      ['topics', 'layout', 'Assuntos e palavras', muted ? `${muted} ${muted === 1 ? 'filtro ativo' : 'filtros ativos'}` : 'Mostrando tudo', () => [
+        // assuntos ligados por padrão: só guarda os desligados
+        ...ui.section('Assuntos', ...Object.entries(TOPICS).map(([k, t]) => ui.toggle(null, t.name, 'news.topicsOff.' + k, null, true))),
+        ...ui.section('Palavras bloqueadas', ui.area('news.muteWords', 'Ex.: BBB, Mega-Sena (separadas por vírgula)')),
+        ui.note('Notícia de um assunto desligado, ou com uma palavra bloqueada no título, não aparece. O assunto vem da seção do site, da categoria do feed ou de palavras do título, e pode errar: no fim do bloco dá para ver as escondidas.')]]
+    ])
   ];
 }
-
 // ---------- Adicionar fonte: busca por nome, como na janela de favoritos ----------
 function openSourcePicker() {
   const dlg = $('#src-dialog'), q = $('#src-q'), list = $('#src-list'), caption = $('#src-caption');
@@ -2099,7 +2340,7 @@ function paintMarket(card, data) {
   else { head = h('div', { class: 'news-head', 'data-range': mk.range }, h('h4', {}, 'Mercado'), seg, btn); fitChips(seg, 'market'); }
   if (!mk.symbols.length) {
     card.replaceChildren(head, h('div', { class: 'news-empty' }, h('span', {}, 'Escolha moedas, ações e cripto para acompanhar.'),
-      h('button', { type: 'button', onclick: () => { togglePanel(true); openTab('blocos'); const b = $('#panel-body'), t = $('#market-settings'); if (t) b.scrollTo({ top: t.offsetTop - b.offsetTop - 8, behavior: 'smooth' }); } }, 'Escolher ativos')));
+      h('button', { type: 'button', onclick: () => { foldOpen.market = 'assets'; togglePanel(true); openTab('blocos'); const b = $('#panel-body'), t = $('#market-settings'); if (t) b.scrollTo({ top: t.offsetTop - b.offsetTop - 8, behavior: 'smooth' }); } }, 'Escolher ativos')));
     return fitSoon();
   }
   // juros e inflação (Banco Central) não dependem do período escolhido: ficam num grupo à parte, embaixo
@@ -2255,13 +2496,17 @@ function marketSettings() {
   });
   return [
     h('h5', { id: 'market-settings' }, 'Mercado'),
-    h('div', { class: 'group' }, ui.action('plus', 'Adicionar ativos', openAssetPicker, 'accent')),
-    ...(rows.length ? ui.section('', ...rows) : []),
-    rows.length ? ui.note('Arraste pela alça para reordenar.') : null,
-    ...ui.section('Exibição',
-      ui.toggle('chart', 'Minigráfico', 'market.spark'),
-      ui.segRow('reset', 'Atualizar', 'market.refresh', [[1, '1 min'], [5, '5 min'], [15, '15 min']])),
-    ui.note('Cotações do Yahoo Finance (cripto também pelo CoinGecko), gratuitas e sem cadastro. Ações e FIIs podem ter atraso de até 15 minutos.')
+    ...ui.folds('market', [
+      ['assets', 'chart', 'Ativos', `${rows.length} ${rows.length === 1 ? 'ativo' : 'ativos'}`, () => [
+        h('div', { class: 'group' }, ui.action('plus', 'Adicionar ativos', openAssetPicker, 'accent')),
+        ...(rows.length ? ui.section('', ...rows) : []),
+        rows.length ? ui.note('Arraste pela alça para reordenar.') : null]],
+      ['show', 'sliders', 'Exibição', 'Minigráfico, atualização', () => [
+        ...ui.section('',
+          ui.toggle('chart', 'Minigráfico', 'market.spark'),
+          ui.segRow('reset', 'Atualizar', 'market.refresh', [[1, '1 min'], [5, '5 min'], [15, '15 min']])),
+        ui.note('Cotações do Yahoo Finance (cripto também pelo CoinGecko), gratuitas e sem cadastro. Ações e FIIs podem ter atraso de até 15 minutos.')]]
+    ])
   ];
 }
 
@@ -2314,7 +2559,6 @@ const ICONS = {
   columns: '<rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9 4v16M15 4v16"/>',
   news: '<rect x="3" y="4" width="18" height="16" rx="4"/><path d="M7 9h10M7 13h10M7 17h6"/>',
   chart: '<path d="M4 19h16"/><path d="m5 15 4-5 4 3 6-7"/>',
-  sieve: '<path d="M3 6h18l-7 8v5l-4 2v-7z"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>'
 };
 const icon = name => {
@@ -2339,11 +2583,64 @@ const changed = () => {
   changeFrame = requestAnimationFrame(() => { changeFrame = 0; applyTheme(); render(); });
 };
 const refresh = () => openTab(currentTab);
+const foldOpen = {}; // qual menu está aberto em cada grupo do painel (ver ui.folds)
+let foldAnim = null;  // grupo cujo menu acabou de ser aberto (só ele anima no próximo redesenho)
+// rola o painel até o menu recém-aberto ficar no meio (o título dele junto); se não cabe, o título vai para o topo
+function centerInPanel(el) {
+  const body = $('#panel-body'), head = el.previousElementSibling;
+  if (!body || !el.isConnected) return;
+  const top0 = body.getBoundingClientRect().top - body.scrollTop;
+  const start = (head || el).getBoundingClientRect().top - top0, end = el.getBoundingClientRect().top - top0 + el.scrollHeight;
+  const room = body.clientHeight, size = end - start;
+  const target = size >= room ? start - 12 : start - (room - size) / 2;
+  // menu perto do fim: abre espaço embaixo para ele poder subir até o meio
+  body.style.paddingBottom = '';
+  const max = body.scrollHeight + (el.scrollHeight - el.offsetHeight) - room;
+  if (target > max) body.style.paddingBottom = `calc(32px + ${Math.ceil(target - max)}px)`;
+  body.scrollTo({ top: Math.max(0, target), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+}
+// abre ou fecha um conteúdo deslizando a altura (e esmaecendo); devolve quando termina
+function slide(el, open) {
+  if (!el || !el.isConnected || matchMedia('(prefers-reduced-motion: reduce)').matches) return Promise.resolve();
+  const full = el.scrollHeight + 'px';
+  el.style.overflow = 'hidden';
+  const a = el.animate(open
+    ? [{ height: '0px', opacity: 0, transform: 'translateY(-6px)' }, { height: full, opacity: 1, transform: 'none' }]
+    : [{ height: full, opacity: 1, transform: 'none' }, { height: '0px', opacity: 0, transform: 'translateY(-6px)' }],
+    { duration: open ? 340 : 240, easing: 'cubic-bezier(.16, 1, .3, 1)', fill: open ? 'none' : 'forwards' });
+  return a.finished.catch(() => {}).then(() => { if (open) el.style.overflow = ''; });
+}
 
 const ui = {
   // legenda pequena + grupo arredondado
   section(title, ...rows) {
     return [title ? h('h5', {}, title) : null, h('div', { class: 'group' }, rows)];
+  },
+  // menus que abrem e fecham, um aberto por vez em cada grupo; itens: [chave, ícone, nome, resumo, () => conteúdo]
+  // (itens falsos são pulados). O conteúdo do aberto vem logo abaixo do grupo de títulos.
+  // Abrir e fechar deslizam (ver slide); redesenhar o painel por outro motivo não reanima nada.
+  folds(group, items) {
+    items = items.filter(Boolean);
+    const open = foldOpen[group], cur = items.find(x => x[0] === open);
+    const just = foldAnim === group;
+    let body = null, busy = false;
+    const heads = items.map(([key, ic, label, sub]) => h('button', {
+      type: 'button', class: 'row-item clickable fold-head' + (open === key ? ' on' + (just ? ' just' : '') : ''), 'aria-expanded': String(open === key),
+      onclick: async e => {
+        if (busy) return;
+        busy = true;
+        // fecha o aberto deslizando (a seta já volta junto) e só então troca
+        e.currentTarget.parentNode.querySelectorAll('.fold-head.on').forEach(b => b.classList.remove('on', 'just'));
+        if (body) await slide(body, false);
+        $('#panel-body').style.paddingBottom = ''; // tira o espaço extra que centerInPanel pôs
+        foldOpen[group] = open === key ? null : key;
+        if (open !== key) foldAnim = group;
+        refresh();
+      }
+    }, h('span', { class: 'badge' }, icon(ic)), h('div', { class: 'two' }, h('span', { class: 'lbl' }, label), sub ? h('span', { class: 'sub' }, sub) : null), icon('down')));
+    if (cur) body = h('div', { class: 'fold-body' }, ...cur[4]().filter(Boolean));
+    if (just) { foldAnim = null; requestAnimationFrame(() => { centerInPanel(body); slide(body, true); }); }
+    return [h('div', { class: 'group' }, heads), body];
   },
   row(ic, label, control, cls = '') {
     return h('div', { class: 'row-item ' + cls }, ic ? h('span', { class: 'badge' }, icon(ic)) : null,
@@ -2579,15 +2876,19 @@ const tabs = {
     return [
       ...ui.section('', ...rows),
       ui.note('Arraste para reordenar. Toque no ajuste de um bloco para mudar posição, tamanho e largura.'),
-      // alinhamento dos blocos que ficam lado a lado na grade (ex.: Mercado e Notícias)
-      ...ui.section('Alinhar blocos lado a lado', h('div', { class: 'row-item' }, ui.seg('theme.gridAlign', [['top', 'Topo'], ['stretch', 'Mesma altura'], ['center', 'Centro'], ['end', 'Base']]))),
-      ...(on('quote') ? ui.section('Frases', ui.area('quotes', 'Frase — Autor (uma por linha)')) : []),
-      ...(on('links') ? ui.section('Links',
-        ui.text('text', 'Título', 'linksTitle', 'Links'),
-        ui.area('links', 'Nome | https://… (um por linha)')) : []),
-      ...(on('countdown') ? ui.section('Contagem',
-        ui.text('text', 'Nome', 'countdown.label', 'Evento'),
-        ui.date('calendar', 'Data', 'countdown.date')) : []),
+      h('h5', {}, 'Mais ajustes'),
+      ...ui.folds('more', [
+        // alinhamento dos blocos que ficam lado a lado na grade (ex.: Mercado e Notícias)
+        ['align', 'columns', 'Alinhar blocos lado a lado', { top: 'Topo', stretch: 'Mesma altura', center: 'Centro', end: 'Base' }[cfg.theme.gridAlign], () =>
+          [h('div', { class: 'group' }, h('div', { class: 'row-item' }, ui.seg('theme.gridAlign', [['top', 'Topo'], ['stretch', 'Mesma altura'], ['center', 'Centro'], ['end', 'Base']])))]],
+        on('quote') && ['quote', 'text', 'Frases', null, () => [h('div', { class: 'group' }, ui.area('quotes', 'Frase — Autor (uma por linha)'))]],
+        on('links') && ['links', 'star', 'Links', null, () => ui.section('',
+          ui.text('text', 'Título', 'linksTitle', 'Links'),
+          ui.area('links', 'Nome | https://… (um por linha)'))],
+        on('countdown') && ['countdown', 'calendar', 'Contagem', cfg.countdown.label || null, () => ui.section('',
+          ui.text('text', 'Nome', 'countdown.label', 'Evento'),
+          ui.date('calendar', 'Data', 'countdown.date'))]
+      ]),
       ...(on('news') ? newsSettings() : []),
       ...(on('market') ? marketSettings() : [])
     ];

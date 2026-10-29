@@ -35,32 +35,23 @@ const BLOCKS = {
   market: 'Mercado'
 };
 
-// tamanho de cada bloco: escala (%), largura (px, fora da grade), colunas da grade (1/3, 2/3, inteira) e extras
+// ajustes de conteúdo de cada bloco (o tamanho e a posição ficam na grade, em cfg.layout)
 const SIZE_DEFAULTS = {
-  clock: { scale: 100 },
-  greeting: { scale: 100 },
-  search: { scale: 100, width: 560 },
-  shortcuts: { scale: 100 },
-  quote: { scale: 100, width: 620 },
-  notes: { scale: 100, width: 720, span: '1', height: 150 },
-  todo: { scale: 100, width: 720, span: '1' },
-  links: { scale: 100, width: 720, span: '1' },
-  countdown: { scale: 100, width: 720, span: '1' },
-  news: { scale: 100, width: 1100, span: 'full', cols: 0, img: 76 },
-  market: { scale: 100, width: 720, span: '1' }
+  news: { cols: 0, img: 76 }
 };
+// a grade (tamanhos, layout padrão e as contas de encaixe) fica em grade.js
 
 const DEFAULTS = {
   sizes: structuredClone(SIZE_DEFAULTS),
+  layout: null, // { items: { id: { x, y, w, h } } } (ver ensureLayout)
   name: '',
   greetingMode: 'auto',
   greetingText: 'Bem-vindo de volta',
   theme: {
     accent: '#f7931a', text: '#f2f2f2', card: '#ffffff', cardOpacity: 12,
     blur: 12, grain: 0, radius: 14, font: 'system-ui, sans-serif', scale: 100,
-    align: 'center', maxWidth: 1100, clockSize: 104, scSize: 56, scCols: 8,
-    hideLabels: false, iconStyle: 'favicon',
-    gridAlign: 'stretch' // blocos lado a lado na grade: top | stretch (mesma altura) | center | end
+    maxWidth: 1100, scSize: 56,
+    hideLabels: false, iconStyle: 'favicon'
   },
   bg: {
     type: 'gradient', color: '#0e0f13', g1: '#0c0d11', g2: '#191b22', g3: '', angle: 160,
@@ -71,17 +62,17 @@ const DEFAULTS = {
   pickWeb: true,
   clock: { h24: true, seconds: false, showDate: true },
   blocks: [
-    { id: 'clock', zone: 'top', on: true },
-    { id: 'greeting', zone: 'top', on: true },
-    { id: 'search', zone: 'center', on: true },
-    { id: 'shortcuts', zone: 'center', on: true },
-    { id: 'quote', zone: 'center', on: false },
-    { id: 'notes', zone: 'widgets', on: false },
-    { id: 'todo', zone: 'widgets', on: false },
-    { id: 'links', zone: 'widgets', on: false },
-    { id: 'countdown', zone: 'widgets', on: false },
-    { id: 'news', zone: 'widgets', on: false },
-    { id: 'market', zone: 'widgets', on: false }
+    { id: 'clock', on: true },
+    { id: 'greeting', on: true },
+    { id: 'search', on: true },
+    { id: 'shortcuts', on: true },
+    { id: 'quote', on: false },
+    { id: 'notes', on: false },
+    { id: 'todo', on: false },
+    { id: 'links', on: false },
+    { id: 'countdown', on: false },
+    { id: 'news', on: false },
+    { id: 'market', on: false }
   ],
   search: {
     // os padrão guardam só id + ligado/desligado; nome e endereço vêm de BUILTIN_ENGINES
@@ -239,14 +230,8 @@ async function applyTheme() {
   r.setProperty('--font', t.font);
   r.setProperty('--scale', t.scale / 100);
   r.setProperty('--max-width', t.maxWidth + 'px');
-  r.setProperty('--clock-size', t.clockSize + 'px');
   r.setProperty('--sc-size', t.scSize + 'px');
-  r.setProperty('--sc-cols', t.scCols);
-  document.body.classList.toggle('align-center', t.align === 'center');
-  document.body.classList.toggle('align-top', t.align === 'top');
   document.body.classList.toggle('hide-labels', t.hideLabels);
-  r.setProperty('--grid-align', t.gridAlign === 'top' ? 'start' : t.gridAlign || 'stretch');
-  document.body.classList.toggle('grid-stretch', (t.gridAlign || 'stretch') === 'stretch');
   $('#custom-css').textContent = cfg.customCss || '';
   await applyBackground();
 }
@@ -453,7 +438,8 @@ const renderers = {
   links() {
     const items = cfg.links.split('\n').map(l => l.split('|').map(s => s.trim())).filter(p => p[1]);
     return h('div', { class: 'card' }, h('h4', {}, cfg.linksTitle),
-      h('div', { class: 'links-list' }, items.map(([n, u]) => h('a', { href: u }, n))));
+      // "mises.org.br" sem https:// virava um endereço dentro da extensão (página de erro)
+      h('div', { class: 'links-list' }, items.map(([n, u]) => h('a', { href: hasScheme(u) ? u : looksLikeAddress(u) ? addressUrl(u) : 'https://' + u }, n))));
   },
 
   countdown() {
@@ -478,15 +464,50 @@ const renderers = {
   }
 };
 
+// ---------- Grade (contas em grade.js) ----------
+// garante um lugar na grade para cada bloco ligado (layout novo, convertido do antigo ou consertado);
+// bloco sem espaço nenhum é desligado. Devolve true se mudou algo (para salvar)
+function ensureLayout(saved) {
+  let dirty = false;
+  if (!cfg.layout || !cfg.layout.items) {
+    cfg.layout = { items: saved && saved.blocks ? migrateLayout(saved.blocks, saved.sizes || {}) : structuredClone(DEFAULT_LAYOUT) };
+    dirty = true;
+  }
+  const items = cfg.layout.items, taken = [], on = cfg.blocks.filter(b => b.on && BLOCK_SIZES[b.id]);
+  const ok = on.filter(b => { const r = items[b.id]; if (!inGrid(r) || taken.some(o => overlap(o, r))) return false; taken.push(r); return true; });
+  for (const b of on) if (!ok.includes(b)) {
+    const r = placeFor(b.id, taken, null);
+    if (r) { items[b.id] = r; taken.push(r); } else b.on = false;
+    dirty = true;
+  }
+  return dirty;
+}
+// retângulos dos blocos ligados (cópias)
+const onItems = () => Object.fromEntries(cfg.blocks.filter(b => b.on && cfg.layout.items[b.id]).map(b => [b.id, { ...cfg.layout.items[b.id] }]));
+function placeCell(cell, r) {
+  cell.style.gridArea = `${r.y + 1} / ${r.x + 1} / span ${r.h} / span ${r.w}`;
+  cell.style.setProperty('--rows', r.h);
+  cell.style.order = r.y * GRID_COLS + r.x; // janela estreita: uma coluna, na ordem da grade
+}
+
 let booted = false;
+let editing = null; // layout de quando a edição começou (Cancelar volta para ele)
 function render() {
-  for (const z of ['top', 'center', 'widgets']) $('#' + z).replaceChildren();
+  const app = $('#app');
+  app.replaceChildren();
   let order = 0;
   for (const b of cfg.blocks) {
-    if (!b.on || !renderers[b.id]) continue;
+    const r = cfg.layout.items[b.id];
+    if (!b.on || !renderers[b.id] || !r) continue;
     const el = renderers[b.id]();
-    if (el) { applyBlockSize(el, b); el.style.setProperty('--i', order++); $('#' + b.zone).append(el); }
+    if (!el) continue;
+    applyBlockSize(el, b);
+    const cell = h('div', { class: 'cell', 'data-block': b.id }, el);
+    placeCell(cell, r);
+    cell.style.setProperty('--i', order++);
+    app.append(cell);
   }
+  if (editing) editUi();
   // ao abrir a guia, os blocos entram em sequência (só na primeira vez; ajustes depois não reanimam)
   if (!booted) {
     document.body.classList.add('entering');
@@ -496,42 +517,38 @@ function render() {
   fitSoon();
 }
 
-// Tudo numa tela só: a página não rola. As notícias que aparecem são as que cabem no espaço,
-// em rodízio entre as fontes (ver abaixo); o resto da página se compacta se precisar.
+// A página não rola: o conteúdo de cada bloco se ajusta à caixa dele na grade. Notícias e Mercado
+// mostram o que cabe, os atalhos encolhem os ícones (até 28 px) e depois escondem os que sobram.
 function fitToScreen() {
-  const app = $('#app'), card = $('.card.news'), list = card && card.querySelector('.news-list');
-  if (!app) return;
-  // bloco travado na troca de fonte: a página fica com o mesmo zoom e o mesmo Mercado de antes da troca
-  // (recalcular com o bloco já travado na altura cheia encolhia a página toda e ela "subia")
-  const locked = card && card.dataset.lockH;
-  app.style.setProperty('--fit-zoom', locked ? card.dataset.lockZoom || 1 : 1);
+  const over = el => el.scrollHeight > el.clientHeight + 1;
   const market = $('.card.market');
-  if (market) market.dataset.fit = locked ? card.dataset.lockMk || 0 : 0;
-  const overScreen = () => app.scrollHeight > app.clientHeight + 1;
-  // o resto da página (sem notícias) precisa caber: o Mercado se compacta e, se ainda faltar,
-  // a página inteira encolhe um pouco (até 70%)
-  const fitBase = () => {
-    if (locked) return;
-    if (market) for (let lv = 1; lv <= 2 && overScreen(); lv++) market.dataset.fit = lv;
-    for (let z = 95; z >= 70 && overScreen(); z -= 5) app.style.setProperty('--fit-zoom', z / 100);
-  };
-  if (!list) return fitBase();
+  if (market) {
+    const rows = [...market.querySelectorAll('.mk-row')];
+    rows.forEach(r => { r.hidden = false; });
+    market.dataset.fit = 0;
+    for (let lv = 1; lv <= 2 && over(market); lv++) market.dataset.fit = lv;
+    for (let i = rows.length - 1; i > 0 && over(market); i--) rows[i].hidden = true;
+  }
+  const sc = $('.cell[data-block="shortcuts"]');
+  if (sc) {
+    // mede os próprios atalhos (a moldura do modo de edição passa um pouco da célula)
+    const grid = sc.firstChild, tiles = [...grid.children], tall = () => grid.offsetHeight > sc.clientHeight + 1;
+    tiles.forEach(t => { t.hidden = false; });
+    let size = cfg.theme.scSize;
+    grid.style.setProperty('--sc-size', size + 'px');
+    while (tall() && size > 28) grid.style.setProperty('--sc-size', (size = Math.max(28, size - 4)) + 'px');
+    for (let i = tiles.length - 1; i > 0 && tall(); i--) tiles[i].hidden = true;
+  }
+  const card = $('.card.news'), list = card && card.querySelector('.news-list');
+  if (!list) return;
 
   // Ordem justa (rodízio): primeiro a notícia mais nova de cada fonte, depois a 2ª de cada uma,
   // e assim por diante. Assim toda fonte ganha o mesmo espaço; a sobra vai para as mais novas.
   const all = [...list.children];
   const order = all.slice().sort((a, b) => (+a.dataset.rank || 0) - (+b.dataset.rank || 0) || (+b.dataset.date || 0) - (+a.dataset.date || 0));
   const sources = new Set(all.map(i => i.dataset.src)).size;
-  card.style.height = card.dataset.lockH ? card.dataset.lockH + 'px' : '';
-  card.style.minHeight = '';
   const show =k => order.forEach((i, n) => { i.hidden = n >= k; });
-
-  // sem notícias, a página cabe? (se nem assim, aceita o que não aumentar a página)
-  show(0); card.dataset.fit = 0;
-  fitBase();
-  const baseOver = overScreen(), baseHeight = app.scrollHeight;
-  const fits = () => !(card.dataset.lockH && card.scrollHeight > card.clientHeight + 1)
-    && (baseOver ? app.scrollHeight <= baseHeight : !overScreen());
+  const fits = () => !over(card);
   // quantas notícias cabem num nível de compactação (busca binária: mais notícias = mais altura)
   const most = level => {
     card.dataset.fit = level;
@@ -558,29 +575,197 @@ function fitToScreen() {
   const cols = getComputedStyle(list).gridTemplateColumns.split(' ').length;
   for (const it of order.slice(k)) { if (k % cols === 0) break; it.hidden = false; if (fits()) k++; else it.hidden = true; }
   if (k % cols && k > cols) order.filter(i => !i.hidden).slice(k - k % cols).forEach(i => { i.hidden = true; });
-  // poucas notícias (ex.: uma fonte só): o bloco ocupa o resto da tela e as linhas se espalham por ele
-  // (ver .news-list no CSS); com altura travada pela troca de fonte, o espaço já é o do bloco
-  const spare = app.clientHeight - app.scrollHeight;
-  if (!card.dataset.lockH && spare > 0) card.style.minHeight = card.offsetHeight + spare + 'px';
+  // poucas notícias (ex.: uma fonte só): as linhas se espalham pelo bloco (ver .news-list no CSS)
 }
 let fitTimer;
 const fitSoon = () => { cancelAnimationFrame(fitTimer); fitTimer = requestAnimationFrame(fitToScreen); };
-addEventListener('resize', () => { const c = $('.card.news'); if (c) delete c.dataset.lockH; fitSoon(); });
+addEventListener('resize', () => {
+  // janela estreita vira uma coluna só: a edição (que conta em células da grade) termina
+  if (editing && matchMedia('(max-width: 700px)').matches) stopEditing(true);
+  fitSoon();
+});
 
-// aplica o tamanho escolhido para o bloco (ver SIZE_DEFAULTS)
+// ajustes de conteúdo das notícias (ver SIZE_DEFAULTS)
 function applyBlockSize(el, b) {
-  const s = cfg.sizes[b.id] || {};
-  el.dataset.block = b.id;
-  el.style.setProperty('--b-scale', (s.scale || 100) / 100);
-  if (b.zone === 'widgets') el.dataset.span = s.span || '1';
-  else if (s.width) { el.style.width = `min(100%, ${s.width}px)`; el.style.maxWidth = 'none'; }
-  if (b.id === 'shortcuts') el.style.setProperty('--sc-size', cfg.theme.scSize * (s.scale || 100) / 100 + 'px');
-  if (s.height) el.style.setProperty('--notes-h', s.height + 'px');
-  if (b.id === 'news') {
-    el.style.setProperty('--news-img', (s.img || 76) + 'px');
-    el.style.setProperty('--news-cols', s.cols || 1);
-    el.classList.toggle('fixed-cols', +s.cols > 0);
+  if (b.id !== 'news') return;
+  const s = cfg.sizes.news || {};
+  el.style.setProperty('--news-img', (s.img || 76) + 'px');
+  el.style.setProperty('--news-cols', s.cols || 1);
+  el.classList.toggle('fixed-cols', +s.cols > 0);
+}
+
+// ---------- Editar layout: arrastar para mover, puxar as bordas para redimensionar ----------
+function startEditing() {
+  if (matchMedia('(max-width: 700px)').matches) return toast('Aumente a janela para editar o layout.');
+  togglePanel(false);
+  editing = structuredClone(cfg.layout.items);
+  document.body.classList.add('editing');
+  document.body.append(h('div', { class: 'edit-bar', role: 'toolbar', 'aria-label': 'Editar layout' },
+    h('span', { class: 'edit-tip', id: 'edit-live', 'aria-live': 'polite' }, 'Arraste para mover · puxe as bordas para mudar o tamanho'),
+    h('button', { type: 'button', onclick: () => stopEditing(false) }, 'Cancelar'),
+    h('button', { type: 'button', class: 'strong', onclick: () => stopEditing(true) }, 'Pronto')));
+  render();
+}
+function stopEditing(keep) {
+  if (!editing) return;
+  if (!keep) cfg.layout.items = editing;
+  editing = null;
+  document.body.classList.remove('editing');
+  $('.edit-bar')?.remove();
+  ensureLayout(); // bloco ligado por outra aba durante a edição ganha lugar
+  save(); render();
+}
+// guias das células e, em cada bloco, a capa de edição (nome, alças e teclado)
+function editUi() {
+  const app = $('#app'), guides = h('div', { class: 'grid-guides', 'aria-hidden': 'true' });
+  for (let i = 0; i < GRID_COLS * GRID_ROWS; i++) guides.append(h('span'));
+  app.prepend(guides);
+  for (const cell of app.querySelectorAll('.cell')) {
+    const name = BLOCKS[cell.dataset.block];
+    const cover = h('div', { class: 'cell-edit', tabindex: 0, role: 'group', 'aria-label': `${name}. Setas movem; Shift e setas mudam o tamanho` },
+      h('span', { class: 'cell-name' }, name),
+      ...['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].map(d => h('span', { class: 'cell-handle', 'data-dir': d })));
+    cover.addEventListener('pointerdown', e => dragCell(e, cell));
+    cover.addEventListener('keydown', e => keyCell(e, cell));
+    cell.append(cover);
   }
+  drawSeams();
+}
+// tamanho de uma célula + espaço entre elas, em pixels
+function cellSize() {
+  const app = $('#app'), cs = getComputedStyle(app);
+  return {
+    colW: (app.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) + parseFloat(cs.columnGap)) / GRID_COLS,
+    rowH: (app.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) + parseFloat(cs.rowGap)) / GRID_ROWS
+  };
+}
+// um ponto só em cada divisa entre dois blocos que se encostam: puxar move a divisa e os dois mudam juntos
+// (a alça do meio daquele lado de cada bloco some, para não ter dois pontos no mesmo lugar)
+function placeSeam(dot, s, B) {
+  const line = s.axis === 'x' ? B.x + 1 : B.y + 1;
+  dot.style.gridArea = s.axis === 'x' ? `${s.from + 1} / ${line} / ${s.to + 1} / ${line + 1}` : `${line} / ${s.from + 1} / ${line + 1} / ${s.to + 1}`;
+}
+function drawSeams() {
+  document.querySelectorAll('.seam').forEach(d => d.remove());
+  document.querySelectorAll('.cell-edit').forEach(c => { c.dataset.joined = ''; });
+  const items = onItems(), cover = id => $(`.cell[data-block="${id}"] > .cell-edit`);
+  for (const s of seams(items)) {
+    if (!cover(s.a) || !cover(s.b)) continue;
+    const dot = h('span', { class: 'seam seam-' + s.axis, title: `Arraste para mudar ${BLOCKS[s.a]} e ${BLOCKS[s.b]} juntos` });
+    placeSeam(dot, s, items[s.b]);
+    dot.addEventListener('pointerdown', e => dragSeam(e, s));
+    $('#app').append(dot);
+    cover(s.a).dataset.joined += s.axis === 'x' ? ' e' : ' s';
+    cover(s.b).dataset.joined += s.axis === 'x' ? ' w' : ' n';
+  }
+}
+function dragSeam(e, s) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const dot = e.currentTarget, { colW, rowH } = cellSize(), base = onItems(), cell = id => $(`.cell[data-block="${id}"]`);
+  let result = base;
+  dot.classList.add('on');
+  dot.setPointerCapture(e.pointerId);
+  const move = ev => {
+    const d = Math.round(s.axis === 'x' ? (ev.clientX - e.clientX) / colW : (ev.clientY - e.clientY) / rowH);
+    const out = moveSeam(base, s.a, s.b, s.axis, d);
+    if (!out || sameRect(out[s.a], result[s.a])) return; // passaria por cima de outro bloco: fica no último que coube
+    result = out;
+    placeCell(cell(s.a), out[s.a]); placeCell(cell(s.b), out[s.b]); placeSeam(dot, s, out[s.b]);
+    fitSoon();
+    announce(s.a, `${BLOCKS[s.a]}: ${out[s.a].w} × ${out[s.a].h} · ${BLOCKS[s.b]}: ${out[s.b].w} × ${out[s.b].h}`);
+  };
+  const up = () => {
+    dot.removeEventListener('pointermove', move);
+    dot.removeEventListener('pointerup', up);
+    dot.removeEventListener('pointercancel', up);
+    Object.assign(cfg.layout.items, result);
+    save(); drawSeams();
+  };
+  dot.addEventListener('pointermove', move);
+  dot.addEventListener('pointerup', up);
+  dot.addEventListener('pointercancel', up);
+}
+const editCells = () => [...document.querySelectorAll('#app > .cell')];
+// anima a troca de lugar dos blocos: mede antes e depois e desliza a diferença
+function flip(change) {
+  const before = new Map(editCells().map(c => [c, c.getBoundingClientRect()]));
+  change();
+  if (calmMotion.matches) return;
+  for (const [c, a] of before) {
+    if (c.classList.contains('dragging')) continue; // o arrastado segue o mouse
+    const b = c.getBoundingClientRect(), dx = a.left - b.left, dy = a.top - b.top;
+    if (Math.abs(dx) > .5 || Math.abs(dy) > .5) c.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 280, easing: 'cubic-bezier(.16, 1, .3, 1)' });
+  }
+}
+function announce(id, msg) {
+  const r = cfg.layout.items[id], live = $('#edit-live');
+  if (live) live.textContent = msg || `${BLOCKS[id]}: coluna ${r.x + 1}, linha ${r.y + 1}, ${r.w} × ${r.h}`;
+}
+function dragCell(e, cell) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const cover = e.currentTarget, id = cell.dataset.block, dir = e.target.dataset.dir || '';
+  const app = $('#app'), { colW, rowH } = cellSize();
+  const base = onItems(), start = base[id], [, , mw, mh] = BLOCK_SIZES[id];
+  let target = start, result = base;
+  const ghost = h('div', { class: 'cell-ghost' });
+  placeCell(ghost, start);
+  app.append(ghost);
+  cell.classList.add('dragging');
+  cover.setPointerCapture(e.pointerId);
+  const move = ev => {
+    const dx = ev.clientX - e.clientX, dy = ev.clientY - e.clientY, cx = Math.round(dx / colW), cy = Math.round(dy / rowH);
+    let { x, y, w, h: hh } = start;
+    if (!dir) {
+      x = clamp(x + cx, 0, GRID_COLS - w); y = clamp(y + cy, 0, GRID_ROWS - hh);
+      cell.style.transform = `translate(${dx}px, ${dy}px)`;
+    } else {
+      if (dir.includes('e')) w = clamp(start.w + cx, mw, GRID_COLS - x);
+      if (dir.includes('s')) hh = clamp(start.h + cy, mh, GRID_ROWS - y);
+      if (dir.includes('w')) { x = clamp(start.x + cx, 0, start.x + start.w - mw); w = start.x + start.w - x; }
+      if (dir.includes('n')) { y = clamp(start.y + cy, 0, start.y + start.h - mh); hh = start.y + start.h - y; }
+    }
+    const r = { x, y, w, h: hh };
+    if (sameRect(r, target)) return;
+    target = r;
+    result = pushAside(base, id, r);
+    ghost.classList.toggle('bad', !result);
+    placeCell(ghost, r);
+    // os outros já vão para onde ficariam (ou voltam, se não couber); no redimensionar o bloco cresce junto
+    flip(() => {
+      for (const c of editCells()) if (c !== cell) placeCell(c, (result || base)[c.dataset.block]);
+      if (dir && result) { placeCell(cell, r); fitSoon(); }
+    });
+    announce(id, result ? `${BLOCKS[id]}: coluna ${r.x + 1}, linha ${r.y + 1}, ${r.w} × ${r.h}` : 'Sem espaço aqui');
+  };
+  const up = () => {
+    cover.removeEventListener('pointermove', move);
+    cover.removeEventListener('pointerup', up);
+    cover.removeEventListener('pointercancel', up);
+    ghost.remove();
+    cell.classList.remove('dragging');
+    const final = result || base;
+    flip(() => { cell.style.transform = ''; for (const c of editCells()) placeCell(c, final[c.dataset.block]); });
+    Object.assign(cfg.layout.items, final);
+    save(); fitSoon(); announce(id); drawSeams();
+  };
+  cover.addEventListener('pointermove', move);
+  cover.addEventListener('pointerup', up);
+  cover.addEventListener('pointercancel', up);
+}
+// teclado: setas movem uma célula; Shift + setas aumentam (direita, baixo) ou diminuem (esquerda, cima)
+function keyCell(e, cell) {
+  const k = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+  if (!k) return;
+  e.preventDefault();
+  const id = cell.dataset.block, s = cfg.layout.items[id], [, , mw, mh] = BLOCK_SIZES[id];
+  const r = e.shiftKey ? { ...s, w: s.w + k[0], h: s.h + k[1] } : { ...s, x: s.x + k[0], y: s.y + k[1] };
+  if (r.w < mw || r.h < mh || !inGrid(r)) return;
+  const out = pushAside(onItems(), id, r);
+  if (!out) return announce(id, 'Sem espaço aqui');
+  flip(() => { Object.assign(cfg.layout.items, out); for (const c of editCells()) placeCell(c, out[c.dataset.block]); });
+  save(); fitSoon(); announce(id); drawSeams();
 }
 
 // ---------- Editor de atalhos ----------
@@ -1625,8 +1810,10 @@ function hiddenWhy(it) {
   const n = cfg.news, off = n.topicsOff || {};
   const t = topicsOf(it).find(k => off[k]);
   if (t) return TOPICS[t].name;
-  const title = fold(it.orig ? it.orig.title : it.title);
-  const w = (n.muteWords || '').split(/[,\n]/).map(s => fold(s).trim()).filter(Boolean).find(w => title.includes(w));
+  // palavra inteira: bloquear "ia" não esconde "dia" nem "Bahia"
+  const title = ' ' + fold(it.orig ? it.orig.title : it.title).replace(/[^\p{L}\p{N}-]+/gu, ' ') + ' ';
+  const w = (n.muteWords || '').split(/[,\n]/).map(s => fold(s).trim()).filter(Boolean)
+    .find(w => title.includes(' ' + w.replace(/[^\p{L}\p{N}-]+/gu, ' ') + ' '));
   return w ? `"${w}"` : '';
 }
 let newsPeek = false; // mostrando as escondidas (só nesta guia)
@@ -1663,9 +1850,6 @@ function paintNews(card, data) {
         type: 'button', class: newsFilter === nm ? 'on' : '', title: nm || 'Todas as fontes',
         onclick: () => {
           if (newsFilter === nm) return;
-          // a altura do bloco fica a mesma ao trocar de fonte (só muda o que está dentro)
-          if (!card.dataset.lockH) Object.assign(card.dataset, { lockH: card.offsetHeight,
-            lockZoom: getComputedStyle($('#app')).getPropertyValue('--fit-zoom').trim() || 1, lockMk: ($('.card.market') || { dataset: {} }).dataset.fit || 0 });
           newsFilter = nm; newsSwitch = true; paintNews(card, raw);
         }
       }, nm ? srcIcon(site, savedIcon[nm]) : allIcon(), h('span', { class: 'chip-name' }, nm || 'Tudo')));
@@ -1886,6 +2070,8 @@ function newsSettings() {
       ['show', 'sliders', 'Exibição', 'Imagens, resumo, tradução, atualização', () => [
         ...ui.section('',
           ui.toggle('image', 'Imagens', 'news.images'),
+          ui.slider('image', 'Tamanho da imagem', 'sizes.news.img', 40, 160, 2, 'px'),
+          ui.segRow('columns', 'Colunas', 'sizes.news.cols', [[0, 'Auto'], [1, '1'], [2, '2'], [3, '3'], [4, '4']]),
           ui.toggle('text', 'Resumo', 'news.summary'),
           ui.toggle('globe', 'Traduzir notícias em inglês', 'news.translate', () => { if (cfg.news.translate) { const c = $('.card.news'); if (c) fillNews(c, true); } }),
           ui.slider('calendar', 'Notícias de até (dias)', 'news.maxAge', 1, 30, 1),
@@ -2406,7 +2592,7 @@ async function fillMarket(card, force, quiet) {
 setInterval(() => {
   if (document.hidden) return;
   const m = $('.card.market'); if (m) fillMarket(m, false, true);
-  const n = $('.card.news'); if (n && !n.dataset.lockH) fillNews(n, false, true);
+  const n = $('.card.news'); if (n) fillNews(n, false, true);
 }, 60000);
 
 // catálogo de ativos por categoria (símbolos do Yahoo Finance; cripto também no CoinGecko)
@@ -2552,9 +2738,6 @@ const ICONS = {
   upload: '<path d="M12 16V5M7 10l5-5 5 5M5 20h14"/>',
   reset: '<path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.5M4 4v4.5h4.5"/>',
   code: '<path d="m8 8-4 4 4 4M16 8l4 4-4 4M14 5l-4 14"/>',
-  zTop: '<path d="M5 4h14"/><rect x="7" y="8" width="10" height="5" rx="2"/>',
-  zCenter: '<path d="M5 4h14M5 20h14" opacity=".35"/><rect x="7" y="9.5" width="10" height="5" rx="2"/>',
-  zGrid: '<rect x="4" y="5" width="7" height="6" rx="2"/><rect x="13" y="5" width="7" height="6" rx="2"/><rect x="4" y="13" width="7" height="6" rx="2"/><rect x="13" y="13" width="7" height="6" rx="2"/>',
   grip: '<path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke-width="2.6"/>',
   columns: '<rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9 4v16M15 4v16"/>',
   news: '<rect x="3" y="4" width="18" height="16" rx="4"/><path d="M7 9h10M7 13h10M7 17h6"/>',
@@ -2794,11 +2977,9 @@ const tabs = {
       ...ui.section('Layout',
         ui.slider('scale', 'Escala', 'theme.scale', 70, 150, 1, '%'),
         ui.slider('corner', 'Cantos', 'theme.radius', 0, 40, 1, 'px'),
-        ui.slider('width', 'Largura', 'theme.maxWidth', 600, 2000, 10, 'px'),
-        ui.segRow('columns', 'Posição', 'theme.align', [['top', null, 'zTop', 'Topo'], ['center', null, 'zCenter', 'Centro']])
+        ui.slider('width', 'Largura', 'theme.maxWidth', 600, 2000, 10, 'px')
       ),
       ...ui.section('Relógio',
-        ui.slider('clock', 'Tamanho', 'theme.clockSize', 32, 220, 1, 'px'),
         ui.segRow('clock', 'Formato', 'clock.h24', [[true, '24h'], [false, '12h']]),
         ui.toggle('timer', 'Segundos', 'clock.seconds'),
         ui.toggle('calendar', 'Data', 'clock.showDate')
@@ -2857,30 +3038,25 @@ const tabs = {
   },
 
   blocos() {
-    const rows = cfg.blocks.map((b, i) => {
+    const rows = cfg.blocks.map(b => {
       const cb = h('input', { type: 'checkbox', checked: b.on });
-      cb.addEventListener('change', () => { b.on = cb.checked; changed(); refresh(); });
-      const open = openSize === b.id;
-      const sizeBtn = b.on ? h('button', { type: 'button', class: 'icon-btn ghost size-btn' + (open ? ' on' : ''), title: 'Posição e tamanho',
-        onclick: () => { openSize = open ? null : b.id; refresh(); } }, icon('sliders')) : null;
-      const row = h('div', { class: 'row-item' + (b.on ? '' : ' off') },
-        h('span', { class: 'grip', title: 'Arraste para reordenar' }, icon('grip')),
+      cb.addEventListener('change', () => {
+        // ligar: volta para onde estava ou vai para o primeiro espaço livre da grade
+        if (cb.checked) {
+          const taken = Object.entries(onItems()).filter(([id]) => id !== b.id).map(([, r]) => r);
+          const r = placeFor(b.id, taken, cfg.layout.items[b.id]);
+          if (!r) { cb.checked = false; return toast('Não há espaço livre na tela. Diminua ou mova um bloco em “Editar layout”.'); }
+          cfg.layout.items[b.id] = r;
+        }
+        b.on = cb.checked; changed(); refresh();
+      });
+      return h('div', { class: 'row-item' + (b.on ? '' : ' off') },
         h('span', { class: 'badge' }, icon(BLOCK_ICONS[b.id] || 'layout')),
         h('span', { class: 'lbl' }, BLOCKS[b.id]),
-        sizeBtn,
         h('label', { class: 'switch' }, cb, h('span', { class: 'knob' })));
-      sortable(row, cfg.blocks, i, refresh);
-      return open && b.on ? [row, sizeEditor(b, i)] : row;
-    }).flat();
+    });
     const on = id => cfg.blocks.some(b => b.id === id && b.on);
-    return [
-      ...ui.section('', ...rows),
-      ui.note('Arraste para reordenar. Toque no ajuste de um bloco para mudar posição, tamanho e largura.'),
-      h('h5', {}, 'Mais ajustes'),
-      ...ui.folds('more', [
-        // alinhamento dos blocos que ficam lado a lado na grade (ex.: Mercado e Notícias)
-        ['align', 'columns', 'Alinhar blocos lado a lado', { top: 'Topo', stretch: 'Mesma altura', center: 'Centro', end: 'Base' }[cfg.theme.gridAlign], () =>
-          [h('div', { class: 'group' }, h('div', { class: 'row-item' }, ui.seg('theme.gridAlign', [['top', 'Topo'], ['stretch', 'Mesma altura'], ['center', 'Centro'], ['end', 'Base']])))]],
+    const more = [
         on('quote') && ['quote', 'text', 'Frases', null, () => [h('div', { class: 'group' }, ui.area('quotes', 'Frase — Autor (uma por linha)'))]],
         on('links') && ['links', 'star', 'Links', null, () => ui.section('',
           ui.text('text', 'Título', 'linksTitle', 'Links'),
@@ -2888,9 +3064,16 @@ const tabs = {
         on('countdown') && ['countdown', 'calendar', 'Contagem', cfg.countdown.label || null, () => ui.section('',
           ui.text('text', 'Nome', 'countdown.label', 'Evento'),
           ui.date('calendar', 'Data', 'countdown.date'))]
-      ]),
+    ].filter(Boolean);
+    return [
+      ...ui.section('', ui.action('layout', 'Editar layout', startEditing, 'accent'), ...rows),
+      ui.note('Em “Editar layout” (ou tecla E), arraste os blocos para mover e puxe as bordas para mudar o tamanho. Um bloco ligado vai para o primeiro espaço livre.'),
+      ...(more.length ? [h('h5', {}, 'Mais ajustes'), ...ui.folds('more', more)] : []),
       ...(on('news') ? newsSettings() : []),
-      ...(on('market') ? marketSettings() : [])
+      ...(on('market') ? marketSettings() : []),
+      ...ui.section('', ui.action('reset', 'Voltar ao layout padrão', () => {
+        cfg.layout = null; ensureLayout(); changed(); refresh();
+      }))
     ];
   },
 
@@ -2961,7 +3144,6 @@ const tabs = {
       ...ui.section('Estilo',
         ui.segRow('star', 'Ícone', 'theme.iconStyle', [['favicon', null, 'globe', 'Ícone do site'], ['letter', null, 'text', 'Inicial']]),
         ui.slider('scale', 'Tamanho', 'theme.scSize', 40, 140, 1, 'px'),
-        ui.slider('columns', 'Por linha', 'theme.scCols', 2, 14, 1),
         ui.toggle('text', 'Mostrar nomes', 'theme.hideLabels', null, true),
         ui.toggle('globe', 'Buscar sites na web', 'pickWeb')
       )
@@ -2975,6 +3157,7 @@ const tabs = {
         const data = JSON.parse(await file.files[0].text());
         cfg = merge(DEFAULTS, data.cfg || data);
         normalizeEngines(cfg.search);
+        ensureLayout(data.cfg || data); // backup de antes da grade: converte o layout
         if (Array.isArray(data.images)) await store.set('images', data.images);
         await store.set('cfg', cfg); await applyTheme(); render(); refresh();
         alert('Configuração importada.');
@@ -2992,40 +3175,13 @@ const tabs = {
       ...ui.section('',
         ui.action('reset', 'Restaurar padrão', async () => {
           if (!confirm('Restaurar tudo para o padrão? Notas, tarefas e imagens serão apagadas.')) return;
-          cfg = structuredClone(DEFAULTS); await store.set('cfg', cfg); await store.set('images', []); await store.set('news', {}); await store.set('market', {});
+          cfg = structuredClone(DEFAULTS); ensureLayout(); await store.set('cfg', cfg); await store.set('images', []); await store.set('news', {}); await store.set('market', {});
           await applyTheme(); render(); refresh();
         }, 'danger')),
-      h('div', { class: 'keys' }, h('kbd', {}, '/'), ' busca', h('kbd', {}, ','), ' ajustes', h('kbd', {}, 'Esc'), ' fechar')
+      h('div', { class: 'keys' }, h('kbd', {}, '/'), ' busca', h('kbd', {}, ','), ' ajustes', h('kbd', {}, 'E'), ' editar layout', h('kbd', {}, 'Esc'), ' fechar')
     ];
   }
 };
-
-// ---------- Ajuste de tamanho de um bloco (abre embaixo da linha dele em Blocos) ----------
-let openSize = null;
-function sizeEditor(b, i) {
-  const id = b.id, s = cfg.sizes[id] || {}, p = k => `sizes.${id}.${k}`;
-  const rows = [ui.segRow('layout', 'Posição', `blocks.${i}.zone`, [['top', null, 'zTop', 'Topo'], ['center', null, 'zCenter', 'Centro'], ['widgets', null, 'zGrid', 'Grade']])];
-  if (!SIZE_DEFAULTS[id]) return h('div', { class: 'size-editor' }, rows);
-  rows.push(ui.slider('scale', 'Tamanho', p('scale'), 50, 200, 5, '%'));
-  if (id === 'clock') rows.push(ui.slider('clock', 'Relógio', 'theme.clockSize', 32, 260, 1, 'px'));
-  if (id === 'shortcuts') rows.push(
-    ui.slider('star', 'Ícones', 'theme.scSize', 32, 140, 1, 'px'),
-    ui.slider('columns', 'Por linha', 'theme.scCols', 2, 14, 1));
-  // na grade a largura é em colunas; fora dela, em pixels
-  if (b.zone === 'widgets' && s.span !== undefined) rows.push(ui.segRow('width', 'Largura', p('span'), [['1', '1/3'], ['2', '2/3'], ['full', 'Inteira']]));
-  else if (s.width !== undefined) rows.push(ui.slider('width', 'Largura', p('width'), 280, 1600, 10, 'px'));
-  if (id === 'notes') rows.push(ui.slider('note', 'Altura', p('height'), 80, 700, 10, 'px'));
-  if (id === 'news') rows.push(
-    ui.segRow('columns', 'Colunas', p('cols'), [[0, 'Auto'], [1, '1'], [2, '2'], [3, '3'], [4, '4']]),
-    ui.slider('image', 'Imagem', p('img'), 40, 160, 2, 'px'));
-  rows.push(h('button', { type: 'button', class: 'size-reset', onclick: () => {
-    cfg.sizes[id] = structuredClone(SIZE_DEFAULTS[id]);
-    if (id === 'clock') cfg.theme.clockSize = DEFAULTS.theme.clockSize;
-    if (id === 'shortcuts') Object.assign(cfg.theme, { scSize: DEFAULTS.theme.scSize, scCols: DEFAULTS.theme.scCols });
-    changed(); refresh();
-  } }, 'Voltar ao tamanho padrão'));
-  return h('div', { class: 'size-editor' }, rows);
-}
 
 let currentTab = 'aparencia';
 // reinicia uma animação de CSS (tirar e pôr a classe no mesmo quadro não reinicia)
@@ -3092,7 +3248,7 @@ for (const dlg of document.querySelectorAll('dialog')) {
   cfg = merge(DEFAULTS, saved);
   // visual minimalista (v2): atualiza o tema de quem já usava a versão antiga; nome, atalhos e notas ficam
   if (saved.theme && saved.design !== DEFAULTS.design) {
-    for (const k of ['card', 'cardOpacity', 'blur', 'radius', 'clockSize', 'scSize']) cfg.theme[k] = DEFAULTS.theme[k];
+    for (const k of ['card', 'cardOpacity', 'blur', 'radius', 'scSize']) cfg.theme[k] = DEFAULTS.theme[k];
     if (cfg.bg.type === 'gradient') Object.assign(cfg.bg, { g1: DEFAULTS.bg.g1, g2: DEFAULTS.bg.g2, g3: '', angle: DEFAULTS.bg.angle, dim: 0 });
     cfg.design = DEFAULTS.design;
     save();
@@ -3111,7 +3267,9 @@ for (const dlg of document.querySelectorAll('dialog')) {
   normalizeEngines(cfg.search);
   if (JSON.stringify(cfg.search.engines) + cfg.search.current !== enginesBefore) save();
   // garante que blocos novos (de versões futuras) apareçam
-  for (const id of Object.keys(BLOCKS)) if (!cfg.blocks.some(b => b.id === id)) cfg.blocks.push({ id, zone: 'widgets', on: false });
+  for (const id of Object.keys(BLOCKS)) if (!cfg.blocks.some(b => b.id === id)) cfg.blocks.push({ id, on: false });
+  // grade (v1.4): quem vem do layout de zonas tem ele convertido uma vez, o mais parecido possível
+  if (ensureLayout(saved)) save();
   await applyTheme();
   render();
   repairSources(); // fontes suas que ficaram sem nome oficial ou sem ícone (em segundo plano)
@@ -3126,11 +3284,14 @@ for (const dlg of document.querySelectorAll('dialog')) {
     // com uma janela aberta, o Esc fecha só ela (antes fechava o painel junto)
     if (document.querySelector('dialog[open]')) return;
     const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
-    if (e.key === 'Escape') togglePanel(false);
+    if (e.key === 'Escape') return editing ? stopEditing(true) : togglePanel(false);
     if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
-    if (e.key === '/') { e.preventDefault(); $('.search input')?.focus(); }
-    if (e.key === ',') { e.preventDefault(); togglePanel(); }
+    if (e.key === '/' && !editing) { e.preventDefault(); $('.search input')?.focus(); }
+    if (e.key === ',' && !editing) { e.preventDefault(); togglePanel(); }
+    if (e.key.toLowerCase() === 'e') { e.preventDefault(); editing ? stopEditing(true) : startEditing(); }
   });
+  // clicar fora dos blocos termina a edição
+  $('#app').addEventListener('pointerdown', e => { if (editing && e.target === e.currentTarget) stopEditing(true); });
 
   // grava o que estiver pendente ao fechar ou trocar de guia
   addEventListener('pagehide', () => { if (saveTimer) flush(); });
@@ -3138,10 +3299,17 @@ for (const dlg of document.querySelectorAll('dialog')) {
 
   // sincroniza entre guias abertas. Ignora a própria gravação e não sobrescreve
   // mudanças locais ainda não salvas (antes podia apagar letras digitadas nas notas)
+  // Com o painel aberto também aceita (antes ignorava, e o próximo ajuste feito aqui gravava por cima
+  // das notas escritas na outra guia); o painel é redesenhado para mexer na configuração nova.
   if (hasChrome) chrome.storage.onChanged.addListener((ch, area) => {
-    if (area !== 'local' || !ch.cfg || !ch.cfg.newValue || saveTimer || !$('#panel').hidden) return;
+    if (area !== 'local' || !ch.cfg || !ch.cfg.newValue || saveTimer) return;
     const incoming = snapshot(ch.cfg.newValue);
     if (lastWritten.includes(incoming) || incoming === snapshot(cfg)) return;
-    cfg = merge(DEFAULTS, ch.cfg.newValue); normalizeEngines(cfg.search); applyTheme(); render();
+    const lay = cfg.layout;
+    cfg = merge(DEFAULTS, ch.cfg.newValue); normalizeEngines(cfg.search);
+    // no meio da edição: aceita o resto (ex.: notas de outra aba) e mantém o layout sendo editado
+    if (editing) { cfg.layout = lay; applyTheme(); return; }
+    ensureLayout(ch.cfg.newValue); applyTheme(); render();
+    if (!$('#panel').hidden) refresh();
   });
 })();

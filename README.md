@@ -21,7 +21,8 @@
   - maior alta e maior baixa do dia por país
   - Selic, CDI e IPCA
   - minigráficos por período
-- **Personalização**: fundo, vidro, cantos, tamanho e posição de cada bloco
+- **Grade como a do Android**: em "Editar layout" (ou tecla E), arraste os blocos para mover e puxe as bordas para redimensionar; o conteúdo se ajusta ao tamanho de cada bloco
+- **Personalização**: fundo, vidro, cantos e cores
 - **Outros blocos**: notas, tarefas, links, contagem regressiva e citações
 
 As configurações ficam só no navegador (`chrome.storage.local`).

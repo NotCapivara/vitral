@@ -28,28 +28,30 @@ body {
 #bg { background-size: cover; background-position: center; transform: scale(1.05); }
 #dim { z-index: -1; pointer-events: none; }
 
+/* Grade da página (como a tela inicial do Android): 12 × 12 células que ocupam a tela inteira;
+   cada bloco ocupa um retângulo delas (grid-area posto pelo newtab.js, ver placeCell) */
 #app {
-  min-height: 100vh;
+  height: 100vh; height: 100dvh;
   max-width: var(--max-width);
   margin: 0 auto;
-  padding: 8vh 24px 96px;
-  display: flex;
-  flex-direction: column;
-  gap: 40px;
-}
-body.align-center #app { justify-content: center; }
-body.align-top #app { justify-content: flex-start; }
-
-.zone { display: flex; flex-direction: column; align-items: center; gap: 28px; }
-#top { gap: 10px; }
-.zone:empty { display: none; }
-.grid {
+  padding: 3vh 24px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)); /* largura de cada bloco: 1/3, 2/3 ou inteira */
-  gap: 16px;
-  align-items: start;
-  width: 100%;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-rows: repeat(12, minmax(0, 1fr));
+  gap: 10px;
+  overflow: hidden;
 }
+/* cada célula tem o tamanho exato da caixa; o conteúdo se ajusta a ela (unidades cqw/cqh) */
+.cell {
+  position: relative; min-width: 0; min-height: 0;
+  display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  container-type: size;
+}
+.cell > :not(.card, .cell-edit) { place-self: center; max-width: 100%; }
+.cell > .card { overflow: hidden; display: flex; flex-direction: column; }
+.cell[data-block="search"] { z-index: 5; } /* o menu de mecanismos passa por cima dos blocos de baixo */
+.cell[data-block="search"] > .search { justify-self: stretch; }
+.cell[data-block="shortcuts"] > .shortcuts { justify-self: stretch; }
 
 .card {
   background: var(--card);
@@ -62,15 +64,17 @@ body.align-top #app { justify-content: flex-start; }
 .card h4 { margin: 0 0 12px; font-size: .68em; font-weight: 500; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
 
 /* Relógio */
+/* tamanhos vêm da caixa do bloco (cqh = 1% da altura, cqw = 1% da largura) */
 .clock {
-  font-size: calc(var(--clock-size, 104px) * var(--scale) * var(--b-scale, 1)); font-weight: 200; line-height: 1;
+  font-size: min(64cqh, 24cqw); font-weight: 200; line-height: 1;
   letter-spacing: -.035em; font-variant-numeric: tabular-nums; text-shadow: 0 1px 20px rgba(0,0,0,.18);
 }
-.date { margin-top: 10px; color: var(--muted); font-size: .9em; letter-spacing: .02em; }
-.greeting { font-size: 1.05em; font-weight: 400; color: var(--muted); letter-spacing: .01em; }
+.block-clock:not(:has(.date)) .clock { font-size: min(86cqh, 26cqw); }
+.date { margin-top: 4cqh; color: var(--muted); font-size: clamp(11px, 13cqh, 24px); letter-spacing: .02em; }
+.greeting { font-size: clamp(12px, 34cqh, 40px); font-weight: 400; color: var(--muted); letter-spacing: .01em; text-align: center; }
 
 /* Busca */
-.search { width: min(560px, 100%); position: relative; z-index: 10; }
+.search { width: 100%; position: relative; z-index: 10; font-size: clamp(13px, 30cqh, 20px); }
 .search input {
   width: 100%; font: inherit; font-size: 1em; color: var(--text);
   padding: .8em 1.1em .8em 2.85em; border-radius: 999px;
@@ -122,8 +126,8 @@ body.align-top #app { justify-content: flex-start; }
   position: relative;
   display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start;
   gap: 18px 10px;
-  max-width: calc(var(--sc-cols, 8) * (var(--sc-size) + 26px));
 }
+.sc[hidden] { display: none; }
 .sc {
   width: calc(var(--sc-size) + 16px);
   display: flex; flex-direction: column; align-items: center; gap: 8px;
@@ -142,7 +146,7 @@ body.align-top #app { justify-content: flex-start; }
 body.hide-labels .sc span { display: none; }
 
 /* Notas, tarefas, frase */
-textarea.notes { width: 100%; height: var(--notes-h, 150px); min-height: 60px; resize: vertical; background: transparent; color: var(--text); border: 0; font: inherit; outline: none; line-height: 1.55; }
+textarea.notes { width: 100%; flex: 1; min-height: 0; resize: none; background: transparent; color: var(--text); border: 0; font: inherit; outline: none; line-height: 1.55; }
 textarea.notes::placeholder { color: color-mix(in srgb, var(--text) 35%, transparent); }
 .todo-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .todo-list li { display: flex; gap: 10px; align-items: center; }
@@ -529,30 +533,15 @@ body > .toast { position: fixed; }
 .tr-tag { opacity: .8; font-style: italic; }
 .pick-row.busy .pick-state .ic { animation: news-spin 1s linear infinite; }
 #src-dialog .pick-list { min-height: 120px; }
-/* Tamanho por bloco */
-[data-block] { font-size: calc(var(--b-scale, 1) * 1em); }
-.grid > [data-span="2"] { grid-column: span 2; }
-.grid > [data-span="full"] { grid-column: 1 / -1; }
-.zone:not(.grid) > .card { width: min(100%, 720px); }
 .card.news.fixed-cols .news-list { grid-template-columns: repeat(var(--news-cols, 1), minmax(0, 1fr)); }
-@media (max-width: 900px) {
-  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-@media (max-width: 600px) {
-  .grid { grid-template-columns: 1fr; }
-  .grid > [data-span="2"] { grid-column: auto; }
-  .card.news.fixed-cols .news-list { grid-template-columns: 1fr; }
-}
+@container (max-width: 420px) { .card.news.fixed-cols .news-list { grid-template-columns: 1fr; } }
 
 /* editor de tamanho no painel */
-.size-btn.on { background: rgba(255,255,255,.12); color: var(--p-text); }
 .size-editor { padding: 4px 8px 10px 40px; background: rgba(0,0,0,.14); display: flex; flex-direction: column; animation: size-in .2s ease; }
 .size-editor .row-item { min-height: 0; padding: 8px 6px; }
 .size-editor .row-item.stack { padding: 8px 6px 10px; }
 .size-editor .badge { width: 24px; height: 24px; }
 @keyframes size-in { from { opacity: 0; transform: translateY(-4px); } }
-.size-reset { align-self: flex-start; margin: 4px 6px 0; background: none; border: 0; padding: 4px 0; color: var(--p-muted); font: inherit; font-size: 12px; cursor: pointer; }
-.size-reset:hover { color: var(--p-text); }
 .group > .size-editor + .row-item::before { left: 54px; }
 /* Vidro líquido integrado: painel, janelas, menu de mecanismos e avisos usam o mesmo vidro
    dos cartões (cor e opacidade de "Cartões", desfoque de "Vidro" e cantos de "Cantos"),
@@ -620,10 +609,7 @@ html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; heig
 /* Tudo numa tela só: a página não rola. As notícias que não couberem ficam de fora
    (a extensão mostra quantas cabem — ver fitToScreen no newtab.js). */
 html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
-#app { height: 100vh; height: 100dvh; min-height: 0; padding: 6vh 24px 28px; overflow: hidden; }
-body.align-center #app { justify-content: safe center; }
-.news-list > [hidden] { display: none; }
-#app > .zone { flex-shrink: 0; }
+.news-list > [hidden], .mk-row[hidden] { display: none; }
 
 /* Nenhum texto de opção cortado com "…": quebra em mais de uma linha se precisar */
 #panel .row-item .lbl, dialog .row-item .lbl, #panel .two .sub, dialog .two .sub {
@@ -675,12 +661,8 @@ body.align-center #app { justify-content: safe center; }
 #asset-dialog .pick-list { min-height: 200px; }
 #asset-dialog .mk-badge { width: 32px; height: 32px; font-size: 10px; background: rgba(255,255,255,.08); color: var(--p-text); }
 
-/* Alinhamento dos blocos lado a lado na grade (Blocos › Alinhar blocos lado a lado) */
-.grid { align-items: var(--grid-align, stretch); }
-/* com "Mesma altura", cada cartão ocupa a linha inteira e o conteúdo se distribui */
-body.grid-stretch .grid > .card { display: flex; flex-direction: column; }
-body.grid-stretch .card.market .mk-list { flex: 1; justify-content: space-around; }
-body.grid-stretch .card.news .news-list { flex: 1; }
+/* o conteúdo dos cartões se distribui pela altura do bloco */
+.card.market .mk-list { flex: 1; justify-content: space-around; }
 /* sobra espaço no bloco (poucas notícias): as linhas se espalham até preencher tudo */
 .card.news { display: flex; flex-direction: column; }
 .card.news .news-list { flex: 1; align-content: space-between; }
@@ -857,8 +839,6 @@ body.panel-open #open-settings:hover { opacity: 1; transform: rotate(135deg); }
 .news-img { opacity: 0; transition: opacity .35s ease; }
 .news-img.ok { opacity: 1; }
 
-/* último recurso para caber numa tela só: tudo encolhe um pouco (ver fitToScreen) */
-#top, #center, #widgets { zoom: var(--fit-zoom, 1); }
 
 /* ================= Movimento: tudo fluido =================
    Curvas usadas: --ease-out (suave, desacelera) e --spring (passa um pouco e volta, como mola). */
@@ -870,12 +850,17 @@ body.panel-open #open-settings:hover { opacity: 1; transform: rotate(135deg); }
 /* Abertura da guia: fundo surge, depois relógio, busca, atalhos e blocos em sequência */
 #bg { animation: bg-in .6s ease both; }
 @keyframes bg-in { from { opacity: 0; } }
-body.entering #top > *, body.entering #center > *, body.entering #widgets > * {
-  animation: rise-in .55s var(--ease-out) both;
-  animation-delay: calc(min(var(--i, 0), 10) * 40ms + 40ms);
-}
-body.entering .grid > * { animation: rise-in .55s var(--ease-out) both; animation-delay: calc(min(var(--i, 0), 10) * 40ms + 100ms); }
-body.entering .sc { animation: rise-in .45s var(--ease-out) both; animation-delay: .14s; }
+/* Opacidade ou filtro numa caixa desligam o vidro (backdrop-filter) de tudo dentro dela até a animação
+   acabar: o vidro só "aparecia" no fim. Por isso a caixa só se move (rise-move) e o esmaecer vai em
+   quem tem o vidro ou não tem vidro dentro (o próprio vidro pode esmaecer sem quebrar). */
+body.entering #app > .cell { animation: rise-move .55s var(--ease-out) both; animation-delay: calc(min(var(--i, 0), 10) * 40ms + 40ms); }
+body.entering #app > .cell > :not(.search, .shortcuts, .cell-edit),
+body.entering #app > .cell > .search > * { animation: fade-in .55s ease both; animation-delay: calc(min(var(--i, 0), 10) * 40ms + 40ms); }
+body.entering .sc > * { animation: fade-in .45s ease both; animation-delay: inherit; }
+/* só desliza, sem scale: com scale o navegador desenha o bloco encolhido durante a animação e redesenha
+   o texto e os gráficos no tamanho certo no fim, e isso aparecia como um pequeno "reajuste" */
+@keyframes rise-move { from { transform: translateY(14px); } }
+body.entering .sc { animation: rise-move .45s var(--ease-out) both; animation-delay: .14s; }
 body.entering .sc:nth-child(2) { animation-delay: .16s; } body.entering .sc:nth-child(3) { animation-delay: .18s; }
 body.entering .sc:nth-child(4) { animation-delay: .20s; } body.entering .sc:nth-child(5) { animation-delay: .22s; }
 body.entering .sc:nth-child(6) { animation-delay: .24s; } body.entering .sc:nth-child(n+7) { animation-delay: .26s; }
@@ -1035,7 +1020,7 @@ dialog.closing::backdrop { animation: backdrop-out .22s ease-in both; }
 @container (max-width: 300px) { .mk-list, .card.market:not(:has(.spark)) .mk-list { grid-template-columns: auto minmax(40px, 1fr) auto; } }
 @container (max-width: 230px) { .mk-list, .card.market:not(:has(.spark)) .mk-list { grid-template-columns: minmax(40px, 1fr) auto; } }
 .mk-row, .card.market:not(:has(.spark)) .mk-row { grid-template-columns: subgrid !important; column-gap: inherit !important; }
-body.grid-stretch .card.market .mk-list { align-content: space-around; }
+.card.market .mk-list { align-content: space-around; }
 /* Troca de período (Dia, Semana, Mês, Ano): juros e inflação não mudam, então não apagam nem redesenham */
 .mk-list.switching > .fixed .spark *, .mk-list.dimmed > .fixed .spark * { animation: none !important; }
 /* "+N": a mesma notícia em outras fontes */
@@ -1062,6 +1047,83 @@ body.grid-stretch .card.market .mk-list { align-content: space-around; }
 .news-page:hover { background: rgba(38, 38, 44, .94); }
 @keyframes page-pop { from { opacity: 0; transform: translateY(var(--dy)) scale(.96); } }
 @media (prefers-reduced-motion: reduce) { .news-page, .news-pop.closing .news-page { animation: none; } }
+
+/* ---------- Conteúdo dos blocos na caixa da grade ---------- */
+.countdown .big { font-size: clamp(18px, 30cqh, 72px); }
+.cell > .card .todo-list, .cell > .card .links-list { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.15) transparent; }
+.quote { overflow: hidden; max-height: 100%; }
+
+/* Janela estreita: uma coluna, na ordem da grade, com rolagem (sem edição) */
+@media (max-width: 700px) {
+  html, body { overflow-y: auto; }
+  #app { display: flex; flex-direction: column; height: auto; min-height: 100dvh; }
+  .cell { flex: none; height: calc(var(--rows) * 64px + (var(--rows) - 1) * 10px); }
+}
+
+/* ---------- Editar layout (ver startEditing no newtab.js) ---------- */
+.grid-guides { display: none; }
+body.editing .grid-guides {
+  display: grid; grid-area: 1 / 1 / -1 / -1; gap: inherit; pointer-events: none;
+  grid-template-columns: repeat(12, minmax(0, 1fr)); grid-template-rows: repeat(12, minmax(0, 1fr));
+  animation: fade-in .3s ease both;
+}
+.grid-guides span { border-radius: 8px; background: rgba(255, 255, 255, .03); outline: 1px dashed rgba(255, 255, 255, .09); outline-offset: -1px; }
+.cell-edit { display: none; }
+body.editing .cell-edit {
+  display: block; position: absolute; inset: -4px; z-index: 6; touch-action: none; cursor: grab; outline: none;
+  border-radius: calc(var(--radius) + 4px); background: rgba(255, 255, 255, .035);
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 70%, transparent);
+  transition: background .2s, border-color .2s, box-shadow .2s;
+}
+body.editing .cell-edit:hover { background: rgba(255, 255, 255, .07); }
+body.editing .cell-edit:focus-visible { border-style: solid; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
+body.editing .cell > :not(.cell-edit) { pointer-events: none; }
+.cell.dragging { z-index: 20; }
+.cell.dragging .cell-edit { cursor: grabbing; border-style: solid; background: rgba(255, 255, 255, .08); box-shadow: 0 18px 40px rgba(0, 0, 0, .35); }
+.cell-name {
+  position: absolute; top: 6px; left: 50%; transform: translateX(-50%); pointer-events: none; white-space: nowrap;
+  padding: 3px 10px; border-radius: 999px; background: rgba(20, 20, 24, .78); color: #f1f1f3; font: 600 11px/1.4 system-ui, sans-serif;
+}
+.cell-handle { position: absolute; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 5px rgba(0, 0, 0, .45); transition: transform .2s var(--spring); }
+.cell-handle:hover { transform: scale(1.3); }
+.cell-handle[data-dir="n"] { top: -7px; left: calc(50% - 7px); cursor: ns-resize; }
+.cell-handle[data-dir="s"] { bottom: -7px; left: calc(50% - 7px); cursor: ns-resize; }
+.cell-handle[data-dir="e"] { right: -7px; top: calc(50% - 7px); cursor: ew-resize; }
+.cell-handle[data-dir="w"] { left: -7px; top: calc(50% - 7px); cursor: ew-resize; }
+.cell-handle[data-dir="ne"] { top: -7px; right: -7px; cursor: nesw-resize; }
+.cell-handle[data-dir="sw"] { bottom: -7px; left: -7px; cursor: nesw-resize; }
+.cell-handle[data-dir="nw"] { top: -7px; left: -7px; cursor: nwse-resize; }
+.cell-handle[data-dir="se"] { bottom: -7px; right: -7px; cursor: nwse-resize; }
+/* ponto único na divisa entre dois blocos (ver drawSeams): fica sobre a linha do meio do espaço entre eles */
+.seam {
+  z-index: 30; width: 18px; height: 18px; border-radius: 50%; touch-action: none; background: #fff;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 60%, transparent), 0 2px 8px rgba(0, 0, 0, .5);
+  transition: transform .2s var(--spring);
+}
+.seam:hover, .seam.on { transform: scale(1.3); }
+.seam-x { justify-self: start; align-self: center; margin-left: -14px; cursor: ew-resize; } /* -(espaço/2 + ponto/2) */
+.seam-y { align-self: start; justify-self: center; margin-top: -14px; cursor: ns-resize; }
+.cell-edit[data-joined~="e"] > [data-dir="e"], .cell-edit[data-joined~="w"] > [data-dir="w"],
+.cell-edit[data-joined~="n"] > [data-dir="n"], .cell-edit[data-joined~="s"] > [data-dir="s"] { display: none; }
+/* onde o bloco vai ficar ao soltar (vermelho: não cabe, ele volta) */
+.cell-ghost {
+  z-index: 1; pointer-events: none; border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 16%, transparent); border: 1.5px solid color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.cell-ghost.bad { background: rgba(255, 90, 80, .14); border-color: rgba(255, 90, 80, .6); }
+.edit-bar {
+  position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 80;
+  display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 16px; border-radius: 999px;
+  background: rgba(26, 26, 30, .86); border: 1px solid rgba(255, 255, 255, .1); box-shadow: 0 16px 40px rgba(0, 0, 0, .4);
+  backdrop-filter: blur(30px) saturate(1.6); -webkit-backdrop-filter: blur(30px) saturate(1.6);
+  color: #f1f1f3; font: 13px system-ui, sans-serif; animation: toast-in .3s var(--ease-out);
+}
+.edit-tip { color: #a9a9b2; margin-right: 6px; white-space: nowrap; }
+.edit-bar button { border: 0; border-radius: 999px; padding: 8px 16px; font: inherit; cursor: pointer; background: rgba(255, 255, 255, .1); color: inherit; transition: background .2s, transform .15s; }
+.edit-bar button:hover { background: rgba(255, 255, 255, .16); }
+.edit-bar button:active { transform: scale(.95); }
+.edit-bar button.strong { background: var(--accent); color: #111; font-weight: 600; }
+body.editing #open-settings { display: none; }
 
 /* filtro de assuntos: escondidas à mostra */
 .news-item.muted { opacity: .45; }

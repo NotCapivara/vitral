@@ -546,7 +546,6 @@ function fitToScreen() {
   // e assim por diante. Assim toda fonte ganha o mesmo espaço; a sobra vai para as mais novas.
   const all = [...list.children];
   const order = all.slice().sort((a, b) => (+a.dataset.rank || 0) - (+b.dataset.rank || 0) || (+b.dataset.date || 0) - (+a.dataset.date || 0));
-  const sources = new Set(all.map(i => i.dataset.src)).size;
   const show =k => order.forEach((i, n) => { i.hidden = n >= k; });
   const fits = () => !over(card);
   // quantas notícias cabem num nível de compactação (busca binária: mais notícias = mais altura)
@@ -559,11 +558,11 @@ function fitToScreen() {
   // Escolhe o nível de compactação que preenche melhor o bloco:
   // - até o nível 3 (resumo de 1 linha), vale encurtar o resumo para caber mais notícias
   //   (uma linha inteira a mais em vez de um vão vazio embaixo); empate fica com o resumo maior;
-  // - os níveis 4 e 5 (sem resumo, sem imagem) só entram se nem assim couber uma de cada fonte.
-  const need = Math.min(sources, order.length);
+  // - os níveis 4 e 5 (sem resumo, sem imagem) só entram se nem uma notícia couber com resumo.
+  //   (Antes entravam para caber uma de cada fonte: com muitas fontes, uma atualização tirava todos os resumos.)
   let best = null;
   for (let level = 0; level <= 5; level++) {
-    if (level > 3 && best && best.k >= need) break;
+    if (level > 3 && best && best.k >= 1) break;
     const k = most(level);
     if (!best || k > best.k) best = { level, k };
   }
@@ -1662,7 +1661,9 @@ const titleWords = t => new Set((t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLo
 // 1. títulos com quase as mesmas palavras;
 // 2. título + começo do resumo, com peso pela raridade: "Eduardo", "Olavo", "foto" contam mais que "Flávio"
 //    ou "Brasil", que aparecem em metade das notícias do dia. Palavras cortadas em 6 letras (publica = publicou).
-//    O corte de 0,45 veio das notícias reais: abaixo dele já juntava Quina com Mega-Sena.
+//    O corte de 0,42 veio das notícias reais: 0,45 separava "Trump diz que conversará com Lula e que petista
+//    lhe pediu para não tomar lado" de "…não tomou partido…porque Lula pediu"; abaixo de 0,4 o encadeamento
+//    puxava notícias de outro assunto. (Quina × Mega-Sena, com 0,43, fica separado pelo teste do título.)
 //    E os títulos também precisam dividir 2+ palavras com peso: resumos que só repetem quem é a pessoa
 //    ("O senador Rogério Marinho (PL-RN), coordenador da campanha…") juntavam declarações diferentes dela.
 const stemWords = s => [...titleWords(s || '')].map(w => w.slice(0, 6));
@@ -1684,7 +1685,7 @@ function groupSame(items) {
     if (tShared.length < 2 || sum(tShared) < .3 * Math.min(sum(ta), sum(tb))) return false;
     const p = bag.get(a), q = bag.get(b); let s = 0, n = 0;
     for (const w of p) if (q.has(w)) { s += idf(w); n++; }
-    return n >= 5 && s >= .45 * Math.min(weight.get(a), weight.get(b));
+    return n >= 5 && s >= .42 * Math.min(weight.get(a), weight.get(b));
   };
   const groups = [];
   for (const it of items) {
@@ -1745,9 +1746,24 @@ function sameStoryPop(anchor, group, orig, biasBy, iconBy) {
   document.body.append(pop);
   // versão com título maior que o da original cresce o que precisar (nada cortado); a pilha é posta
   // pelas alturas reais, para a original continuar exatamente no lugar dela
-  const kids = [...pop.children], hs = kids.map(k => k.offsetHeight);
-  let y = r.top - hs.slice(0, mid).reduce((a, x) => a + x + GAP, 0);
-  pop.style.top = y + 'px';
+  const kids = [...pop.children], room = innerHeight - 24;
+  const measure = () => kids.map(k => k.offsetHeight), stackH = hs => hs.reduce((a, x) => a + x + GAP, -GAP);
+  let hs = measure();
+  // pilha maior que a tela: as folhas perdem o resumo e a altura mínima (só título e foto)
+  if (stackH(hs) > room) {
+    pop.classList.add('no-sum');
+    pop.style.setProperty('--page-h', '0px');
+    hs = measure();
+  }
+  const pre = hs.slice(0, mid).reduce((a, x) => a + x + GAP, 0), total = stackH(hs);
+  let top = clamp(r.top - pre, 12, innerHeight - 12 - total);
+  // nem assim cabe: fica do tamanho da tela e rola, começando do topo
+  if (total > room) {
+    top = 12;
+    Object.assign(pop.style, { maxHeight: room + 'px', overflowY: 'auto' });
+  }
+  pop.style.top = top + 'px';
+  let y = top - pop.scrollTop; // onde a primeira folha está de fato na tela
   kids.forEach((k, i) => { k.style.setProperty('--dy', r.top - y + 'px'); y += hs[i] + GAP; });
   const close = e => {
     if (!pop.isConnected) return removeEventListener('pointerdown', close, true), removeEventListener('keydown', close, true);

@@ -1030,7 +1030,7 @@ dialog.closing::backdrop { animation: backdrop-out .22s ease-in both; }
 }
 .news-also:hover { background: rgba(255, 255, 255, .2); }
 /* as versões saltam numa pilha vertical a partir da notícia (que fica no lugar), cada uma do tamanho dela */
-.news-pop { position: fixed; z-index: 70; display: flex; flex-direction: column; }
+.news-pop { position: fixed; z-index: 70; display: flex; flex-direction: column; overscroll-behavior: contain; scrollbar-width: none; }
 .news-pop.closing { pointer-events: none; }
 .news-pop.closing .news-page { animation: page-close .3s var(--ease-out) both; animation-delay: calc(var(--i) * 30ms); }
 @keyframes page-close { to { opacity: 0; transform: translateY(var(--dy)) scale(.96); } }

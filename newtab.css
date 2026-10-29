@@ -320,6 +320,14 @@ input.inline[type=date] { color-scheme: dark; flex: none; }
   background: #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, .35); transition: transform .15s;
 }
 #panel input[type=range]:active::-webkit-slider-thumb { transform: scale(1.12); }
+/* Firefox: o mesmo controle com os seletores -moz- */
+#panel input[type=range]::-moz-range-track { height: 4px; border-radius: 999px; background: rgba(255, 255, 255, .14); }
+#panel input[type=range]::-moz-range-progress { height: 4px; border-radius: 999px; background: var(--accent); }
+#panel input[type=range]::-moz-range-thumb {
+  width: 20px; height: 20px; border: 0; border-radius: 50%;
+  background: #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, .35); transition: transform .15s;
+}
+#panel input[type=range]:active::-moz-range-thumb { transform: scale(1.12); }
 
 /* Cores em círculos */
 .swatches { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -754,6 +762,8 @@ body.panel-open #open-settings:hover { opacity: 1; transform: rotate(135deg); }
   padding: 13px 16px; font-size: 13px; line-height: 1.55; color: var(--p-text); field-sizing: content; overflow-wrap: anywhere;
 }
 #panel textarea:focus { background: rgba(255, 255, 255, .03); }
+/* Firefox (sem field-sizing): altura fixa com rolagem, senão o texto some */
+@supports not (field-sizing: content) { #panel textarea { min-height: 6.5em; overflow-y: auto; resize: vertical; } }
 /* Filtros de fontes das notícias: ícone + nome; quando não cabem, só o ícone (a escolhida mantém o nome) */
 .news-chips button { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .news-chips .src-ic { width: 14px; height: 14px; border-radius: 4px; flex: none; opacity: .8; transition: opacity .2s; }

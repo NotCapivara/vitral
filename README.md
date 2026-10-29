@@ -1,6 +1,6 @@
 # Vitral
 
-**Um redesign da nova guia do Brave (e do Chrome).** Em vez da página padrão, uma tela de vidro limpa, com relógio, busca, notícias das fontes que você escolher e o mercado do dia. Tudo cabe numa tela só, sem rolagem, e sem rastreamento.
+**Um redesign da nova guia do Brave (e do Chrome e do Firefox).** Em vez da página padrão, uma tela de vidro limpa, com relógio, busca, notícias das fontes que você escolher e o mercado do dia. Tudo cabe numa tela só, sem rolagem, e sem rastreamento.
 
 ![Nova guia com relógio, busca, citação, Mercado e Notícias](docs/captura.webp)
 
@@ -29,11 +29,24 @@ As configurações ficam só no navegador (`chrome.storage.local`).
 
 ## Instalar
 
-1. Baixe o **`vitral-vX.Y.Z.zip`** da [versão mais recente](https://github.com/NotCapivara/vitral/releases/latest) e extraia numa pasta que você não vá apagar.
+### Brave e Chrome
+
+1. Baixe o **`vitral-vX.Y.Z-chrome.zip`** da [versão mais recente](https://github.com/NotCapivara/vitral/releases/latest) e extraia numa pasta que você não vá apagar.
 2. Abra `brave://extensions` (ou `chrome://extensions`) e ligue o **Modo do desenvolvedor**.
 3. Clique em **Carregar sem compactação** e escolha a pasta **`vitral`** que saiu do zip.
 
 Se você clonou o repositório para editar o código, escolha a pasta do clone e, depois de cada edição, clique em ↻ no cartão da extensão.
+
+### Firefox (140 ou mais novo)
+
+1. Baixe o **`vitral-vX.Y.Z-firefox.zip`** da [versão mais recente](https://github.com/NotCapivara/vitral/releases/latest) (não precisa extrair).
+2. Abra `about:debugging#/runtime/this-firefox` e clique em **Carregar extensão temporária…**; escolha o zip.
+
+O Firefox só instala de vez extensões assinadas pela Mozilla. Carregada assim, a extensão some quando o Firefox fecha. No Firefox, os atalhos mostram a inicial do site em vez do ícone guardado pelo navegador (os ícones baixados continuam funcionando).
+
+## Desenvolvimento
+
+O código é um só para os dois navegadores. Como montar, testar e o que muda entre eles está em [AGENTS.md](AGENTS.md).
 
 ## Dados externos
 

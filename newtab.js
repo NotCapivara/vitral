@@ -1,10 +1,16 @@
-/* Vitral — nova guia em vidro para Brave e Chrome. Configurações só no navegador e nenhuma
+/* Vitral — nova guia em vidro para Brave/Chrome e Firefox. Configurações só no navegador e nenhuma
    telemetria; a rede só é usada pelo que você liga (notícias, mercado, tradução, busca de sites),
    e toda chamada passa por net(), sem cookies nem Referer. */
 'use strict';
 
-// ---------- Armazenamento (chrome.storage.local, com fallback p/ testes) ----------
+// ---------- Diferenças entre navegadores: TODAS ficam aqui (ver AGENTS.md) ----------
+// O código usa chrome.* (o Firefox também aceita, com promessas). O que só um navegador tem
+// vira uma constante aqui, e o resto do código pergunta por ela (nunca pelo nome do navegador).
 const hasChrome = typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local;
+// ícone dos sites pelo cache do próprio navegador: só Chrome/Brave (o Firefox não tem /_favicon/; lá fica a letra)
+const favUrl = location.protocol === 'chrome-extension:' ? (url, size) => `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(url)}&size=${size}` : null;
+
+// ---------- Armazenamento (chrome.storage.local, com fallback p/ testes) ----------
 // toda chamada de rede passa por aqui: sem cookies (nenhum site reconhece você pela sessão dele)
 // e sem cabeçalho Referer (os sites não ficam sabendo que o pedido veio desta extensão)
 const net = (url, opts = {}) => fetch(url, { credentials: 'omit', referrerPolicy: 'no-referrer', ...opts });
@@ -372,8 +378,8 @@ const renderers = {
       const tile = h('div', { class: 'tile' });
       if (sc.icon && /^(https?:|data:|icons\/)/.test(sc.icon)) tile.append(h('img', { src: sc.icon, alt: '' }));
       else if (sc.icon) tile.textContent = sc.icon;
-      else if (cfg.theme.iconStyle === 'favicon' && hasChrome) {
-        const img = h('img', { alt: '', src: `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(sc.url)}&size=64` });
+      else if (cfg.theme.iconStyle === 'favicon' && favUrl) {
+        const img = h('img', { alt: '', src: favUrl(sc.url, 64) });
         tile.append(img);
       } else tile.textContent = (sc.name || '?')[0].toUpperCase();
 
@@ -1522,7 +1528,7 @@ const ago = ms => {
 };
 // ícone guardado na extensão; senão o que o navegador já conhece
 const srcIcon = (site, saved) => saved ? h('img', { class: 'src-ic', alt: '', src: saved })
-  : hasChrome ? h('img', { class: 'src-ic', alt: '', src: `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(site)}&size=32` })
+  : favUrl ? h('img', { class: 'src-ic', alt: '', src: favUrl(site, 32) })
   : h('span', { class: 'src-ic dot' });
 
 // filtros de fontes sempre com ícone e nome, todos à vista: se não cabem, vão se juntando
@@ -2918,7 +2924,7 @@ function favTile(sc) {
   const t = h('span', { class: 'mini-tile' });
   if (sc.icon && /^(https?:|data:|icons\/)/.test(sc.icon)) t.append(h('img', { src: sc.icon, alt: '', referrerpolicy: 'no-referrer' }));
   else if (sc.icon) t.textContent = sc.icon;
-  else if (hasChrome) t.append(h('img', { alt: '', src: `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(sc.url)}&size=32` }));
+  else if (favUrl) t.append(h('img', { alt: '', src: favUrl(sc.url, 32) }));
   else t.textContent = (sc.name || '?')[0].toUpperCase();
   return t;
 }
@@ -3158,7 +3164,7 @@ const tabs = {
     return [
       ...ui.section('', ...rows, ui.action('plus', 'Adicionar favoritos', openPicker, 'accent')),
       ...ui.section('Estilo',
-        ui.segRow('star', 'Ícone', 'theme.iconStyle', [['favicon', null, 'globe', 'Ícone do site'], ['letter', null, 'text', 'Inicial']]),
+        favUrl ? ui.segRow('star', 'Ícone', 'theme.iconStyle', [['favicon', null, 'globe', 'Ícone do site'], ['letter', null, 'text', 'Inicial']]) : null,
         ui.slider('scale', 'Tamanho', 'theme.scSize', 40, 140, 1, 'px'),
         ui.toggle('text', 'Mostrar nomes', 'theme.hideLabels', null, true),
         ui.toggle('globe', 'Buscar sites na web', 'pickWeb')

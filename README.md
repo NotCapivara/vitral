@@ -34,6 +34,7 @@ As configurações ficam só no navegador (`chrome.storage.local`).
 1. Baixe o **`vitral-vX.Y.Z-chrome.zip`** da [versão mais recente](https://github.com/NotCapivara/vitral/releases/latest) e extraia numa pasta que você não vá apagar.
 2. Abra `brave://extensions` (ou `chrome://extensions`) e ligue o **Modo do desenvolvedor**.
 3. Clique em **Carregar sem compactação** e escolha a pasta **`vitral`** que saiu do zip.
+4. **Só no Brave:** o Brave põe uma barra no rodapé da nova guia ("Vitral | Personalizar o Brave"). Para tirar, feche o Brave e clique duas vezes em **`extras\esconder-rodape-brave.cmd`**, dentro da pasta `vitral`. Isso vale para todos os perfis e só precisa ser feito uma vez. A barra é do próprio Brave, e a extensão não consegue escondê-la sozinha.
 
 Se você clonou o repositório para editar o código, escolha a pasta do clone e, depois de cada edição, clique em ↻ no cartão da extensão.
 

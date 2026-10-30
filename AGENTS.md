@@ -11,6 +11,7 @@ Extensão de nova guia (MV3) para **Brave/Chrome e Firefox, com um código só**
 | `grade.js` | Contas da grade 12×12 (sem DOM). Exporta para o Node via `module.exports` |
 | `newtab.css` | Estilos. Vidro = `backdrop-filter` |
 | `manifest.json` | Manifesto **base (Chrome/Brave)**. O do Firefox é gerado a partir dele |
+| `extras/esconder-rodape-brave.*` | Vai no zip. Com o Brave fechado, esconde a barra "Vitral \| Personalizar o Brave" (preferência `ntp_footer.settings.extension_attribution` em `Preferences`, em todos os perfis) |
 | `tools/build.ps1` | Monta `dist/chrome`, `dist/firefox` e os dois zips do release |
 | `tests/grade.test.js` | Testes das contas da grade (`node tests/grade.test.js`) |
 | `tests/smoke.js` | Abre a versão montada num navegador sem janela e confere o básico |

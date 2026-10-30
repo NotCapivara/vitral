@@ -13,7 +13,11 @@ if (-not (Test-Path $UserData)) { Done "Não achei o Brave em: $UserData" }
 # o Brave regrava as preferências ao fechar: com ele aberto, a mudança se perderia
 $default = $UserData -eq "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data"
 $open = Get-CimInstance Win32_Process -Filter "Name='brave.exe'" | Where-Object {
-  $c = $_.CommandLine; if ($c -match '--user-data-dir=("?)([^"]+)\1') { $Matches[2].TrimEnd('\') -eq $UserData.TrimEnd('\') } else { $default } }
+  # sem linha de comando (Brave aberto como administrador): não dá para saber o perfil, conta como o padrão
+  $c = $_.CommandLine
+  if ($null -eq $c) { $default }
+  elseif ($c -match '--user-data-dir=(?:"([^"]+)"|(\S+))') { $(if ($Matches[1]) { $Matches[1] } else { $Matches[2] }).TrimEnd('\') -eq $UserData.TrimEnd('\') }
+  else { $default } }
 if ($open) { Done 'Feche o Brave por completo (inclusive o ícone perto do relógio, se houver) e rode de novo.' }
 
 Add-Type -AssemblyName System.Web.Extensions
@@ -34,8 +38,9 @@ foreach ($dir in Get-ChildItem $UserData -Directory | Where-Object { $_.Name -eq
     $n = [regex]::Replace($t, '("ntp_footer"\s*:\s*\{)(\s*\})?', { param($m) $m.Groups[1].Value + '"settings":{"extension_attribution":false}' + $(if ($m.Groups[2].Success) { '}' } else { ',' }) }, 'None', [TimeSpan]::FromSeconds(5))
   }
   else { $n = $t -replace '^\s*\{', '{"ntp_footer":{"settings":{"extension_attribution":false}},' }
-  # só grava se o resultado ainda for um JSON válido
-  try { [void]$json.DeserializeObject($n) } catch { Write-Host "$($dir.Name): não mexi (formato inesperado)"; continue }
+  # só grava se o resultado ainda for um JSON válido e a preferência tiver ficado mesmo em false
+  try { $v = $json.DeserializeObject($n).ntp_footer.settings.extension_attribution } catch { $v = $null }
+  if (-not ($v -is [bool] -and -not $v)) { Write-Host "$($dir.Name): não mexi (formato inesperado)"; continue }
   Copy-Item $file "$file.vitral-backup" -Force
   [IO.File]::WriteAllText($file, $n, $utf8)
   Write-Host "$($dir.Name): barra escondida"; $changed++

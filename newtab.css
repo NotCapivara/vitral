@@ -154,7 +154,7 @@ textarea.notes::placeholder { color: color-mix(in srgb, var(--text) 35%, transpa
 .todo-list li span { flex: 1; }
 .todo-list li button { background: none; border: 0; color: var(--text); opacity: 0; cursor: pointer; transition: opacity .15s; }
 .todo-list li:hover button { opacity: .5; }
-.todo-list li button:hover { opacity: 1; }
+.todo-list li button:hover, .todo-list li button:focus-visible { opacity: 1; }
 .todo-add { width: 100%; margin-top: 12px; background: transparent; border: 0; border-bottom: 1px solid var(--line); color: var(--text); font: inherit; padding: 6px 0; outline: none; }
 .todo-add::placeholder { color: color-mix(in srgb, var(--text) 35%, transparent); }
 input[type=checkbox] { accent-color: var(--accent); }
@@ -174,6 +174,7 @@ input[type=checkbox] { accent-color: var(--accent); }
 }
 #open-settings svg { width: 18px; height: 18px; }
 #open-settings:hover { opacity: .8; transform: rotate(45deg); }
+#open-settings:focus-visible { opacity: 1; }
 
 /* Painel: folha flutuante de vidro */
 #panel {
@@ -338,6 +339,8 @@ input.inline[type=date] { color-scheme: dark; flex: none; }
 }
 .swatch:hover { transform: scale(1.08); }
 .swatch input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; padding: 0; border: 0; }
+/* o seletor de cor é invisível: o anel do teclado vai no círculo */
+.swatch:has(input:focus-visible) { outline: 2px solid rgba(255, 255, 255, .5); outline-offset: 2px; }
 .swatch.on { box-shadow: 0 0 0 2px #121215, 0 0 0 4px rgba(255, 255, 255, .85); }
 .swatch.empty { background: transparent; box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, .22); }
 .swatch.empty .ic { width: 14px; height: 14px; }
@@ -348,7 +351,7 @@ input.inline[type=date] { color-scheme: dark; flex: none; }
   display: grid; place-items: center; background: #2c2c32; color: #ddd; cursor: pointer; opacity: 0; transition: opacity .15s;
 }
 .swatch-x .ic { width: 10px; height: 10px; }
-.swatch-wrap:hover .swatch-x, .thumb:hover .swatch-x { opacity: 1; }
+.swatch-wrap:hover .swatch-x, .thumb:hover .swatch-x, .swatch-x:focus-visible { opacity: 1; }
 
 /* Fontes */
 .fonts { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -496,12 +499,6 @@ button.pick-row { border: 0; background: transparent; cursor: pointer; }
 
 /* campo + botão para adicionar fonte */
 input.inline.left { text-align: left; }
-.pill-btn {
-  flex: none; border: 0; border-radius: 999px; padding: 6px 12px; cursor: pointer;
-  background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); font: inherit; font-size: 13px; font-weight: 600;
-}
-.pill-btn:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
-.pill-btn:disabled { opacity: .5; cursor: default; }
 /* Viés: vermelho forte → vermelho fraco → cinza → azul fraco → azul forte */
 #panel [hidden] { display: none !important; }
 .bias-dots { display: flex; align-items: center; gap: 3px; flex: none; padding: 4px 2px; }
@@ -526,7 +523,6 @@ input.inline.left { text-align: left; }
 .pick-search .ic { width: 17px; height: 17px; display: grid; }
 .pick-search .ic svg { width: 100%; height: 100%; }
 .news-src-list { display: flex; flex-direction: column; gap: 8px; }
-.news-web { display: flex; flex-direction: column; gap: 8px; }
 /* aviso rápido */
 .toast {
   position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 60; max-width: calc(100% - 32px);
@@ -636,7 +632,7 @@ html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
 .card.market { padding: 16px 12px 8px; }
 .mk-list { display: flex; flex-direction: column; }
 .mk-row {
-  display: grid; grid-template-columns: 34px minmax(0, 1fr) 84px minmax(96px, auto); align-items: center; gap: 12px; /* colunas fixas: gráficos e preços alinhados */
+  display: grid; align-items: center; gap: 12px; /* colunas vêm da .mk-list (subgrid, mais abaixo) */
   padding: 8px; border-radius: calc(var(--radius) * .7); transition: background .2s;
 }
 .mk-row:hover { background: rgba(255,255,255,.045); }
@@ -663,7 +659,6 @@ html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
 .spark.empty { width: 84px; }
 .market-range { flex: none; }
 #panel .mk-badge { width: 30px; height: 30px; font-size: 10px; background: rgba(255,255,255,.08); color: var(--p-text); }
-.card.market:not(:has(.spark)) .mk-row { grid-template-columns: 34px minmax(0, 1fr) minmax(96px, auto); }
 
 .asset-cats { flex-wrap: wrap; overflow: visible; gap: 4px; }
 #asset-dialog .pick-list { min-height: 200px; }
@@ -768,8 +763,6 @@ body.panel-open #open-settings:hover { opacity: 1; transform: rotate(135deg); }
 .news-chips button { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .news-chips .src-ic { width: 14px; height: 14px; border-radius: 4px; flex: none; opacity: .8; transition: opacity .2s; }
 .news-chips button:hover .src-ic, .news-chips button.on .src-ic { opacity: 1; }
-.news-chips.compact button:not(.on) .src-ic + .chip-name { display: none; }
-.news-chips.compact button:not(.on):has(.src-ic) { padding: 5px 7px; }
 .news-chips.fade-r { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
 .news-chips.fade-l { -webkit-mask-image: linear-gradient(90deg, transparent, #000 28px); mask-image: linear-gradient(90deg, transparent, #000 28px); }
 .news-chips.fade-l.fade-r { -webkit-mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
@@ -798,7 +791,6 @@ body.panel-open #open-settings:hover { opacity: 1; transform: rotate(135deg); }
 .news-refresh { margin-left: 0; }
 .news-chips .all-ic { display: grid; place-items: center; border-radius: 0; }
 .news-chips .all-ic svg { width: 13px; height: 13px; }
-.news-chips.compact button:not(.on):has(.src-ic) { width: 30px; padding: 0; justify-content: center; }
 /* passar o mouse: o ícone dá um pulinho e cresce, com mola; o texto clareia */
 .news-chips .src-ic { transition: transform .35s cubic-bezier(.34, 1.56, .64, 1), opacity .2s; }
 .news-chips button:hover .src-ic { transform: translateY(-2px) scale(1.18); }
@@ -965,10 +957,11 @@ dialog.closing::backdrop { animation: backdrop-out .22s ease-in both; }
 }
 .todo-list li.leaving { animation: todo-out .26s ease-in both !important; }
 @keyframes todo-out { to { opacity: 0; transform: translateX(12px); } }
+/* os dois acima têm !important e escapavam do bloco de menos movimento (rise-in desfoca) */
+@media (prefers-reduced-motion: reduce) { .todo-list li.fresh, .todo-list li.leaving { animation: none !important; } }
 
 /* Bloco do Mercado estreito: o nome do ativo não quebra no meio ("Iboves/pa");
    quem cede espaço é o minigráfico, que encolhe proporcionalmente */
-.mk-row { grid-template-columns: 34px minmax(104px, 1fr) minmax(40px, 84px) minmax(96px, auto); }
 .mk-name .lbl, .mk-name .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
 .spark { width: 100%; max-width: 84px; height: auto; }
 .spark svg { width: 100%; height: auto; aspect-ratio: 84 / 28; }
@@ -985,11 +978,9 @@ dialog.closing::backdrop { animation: backdrop-out .22s ease-in both; }
 .mk-txt { font: 600 10.5px/1 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: .02em; }
 .mk-txt.small { font-size: 9px; letter-spacing: 0; }
 .mk-txt.sign { font: 500 16px/1 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: 0; }
-.mk-hint { color: var(--muted); font-weight: 400; font-size: .86em; margin-left: 4px; }
 
 /* Tudo no Mercado na mesma fonte do resto da página (a escolhida em Aparência):
    o complemento do destaque só muda a cor; os códigos e sinais dos símbolos também seguem a fonte */
-.mk-hint { font: inherit; color: var(--muted); margin-left: 5px; }
 .mk-badge, .mk-txt, .mk-txt.small, .mk-txt.sign { font-family: var(--font); }
 /* Mercado compacto quando a tela é baixa (ver fitToScreen) */
 .card.market[data-fit="1"] .mk-row { padding-top: 4px; padding-bottom: 4px; }
@@ -999,25 +990,20 @@ dialog.closing::backdrop { animation: backdrop-out .22s ease-in both; }
 /* Mercado estreito: nada vaza para fora do bloco. As colunas se ajustam à largura do próprio bloco
    (não da tela): primeiro o nome e o gráfico cedem, depois o gráfico sai, por fim o símbolo sai */
 .card.market { container-type: inline-size; }
-.mk-row { grid-template-columns: 34px minmax(56px, 1fr) minmax(36px, 84px) auto; gap: 10px; }
+.mk-row { gap: 10px; }
 .mk-price { min-width: 0; }
 @container (max-width: 380px) {
-  .mk-row { grid-template-columns: 30px minmax(48px, 1fr) minmax(28px, 64px) auto; gap: 8px; padding-left: 4px; padding-right: 4px; }
+  .mk-row { gap: 8px; padding-left: 4px; padding-right: 4px; }
   .mk-badge { width: 30px; height: 30px; }
   .mk-price > span:first-child { font-size: .82em; }
 }
 @container (max-width: 300px) {
-  .mk-row { grid-template-columns: 28px minmax(40px, 1fr) auto; }
   .mk-row .spark { display: none; }
   .mk-badge { width: 28px; height: 28px; }
 }
 @container (max-width: 230px) {
-  .mk-row { grid-template-columns: minmax(40px, 1fr) auto; }
   .mk-row .mk-badge { display: none; }
-}/* sem minigráfico (desligado em Exibição): as mesmas regras, sem a coluna do gráfico */
-.card.market:not(:has(.spark)) .mk-row { grid-template-columns: 34px minmax(56px, 1fr) auto; }
-@container (max-width: 380px) { .card.market:not(:has(.spark)) .mk-row { grid-template-columns: 30px minmax(48px, 1fr) auto; } }
-@container (max-width: 230px) { .card.market:not(:has(.spark)) .mk-row { grid-template-columns: minmax(40px, 1fr) auto; } }
+}
 /* Mercado: todas as linhas dividem as mesmas colunas (subgrid). A coluna do preço tem a largura do maior
    preço, então os minigráficos ficam num eixo vertical único, mesmo com preços de tamanhos diferentes */
 .mk-list { display: grid; grid-template-columns: auto minmax(56px, 1fr) minmax(36px, 84px) auto; column-gap: 10px; }

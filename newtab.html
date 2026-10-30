@@ -28,7 +28,7 @@
   </aside>
 
   <!-- EDITOR DE ATALHO (Salvar vem primeiro no código para ser o botão do Enter) -->
-  <dialog id="sc-dialog">
+  <dialog id="sc-dialog" aria-labelledby="sc-title">
     <form method="dialog" id="sc-form">
       <div class="sheet-head">
         <button value="ok" class="txt strong">Salvar</button>
@@ -45,10 +45,10 @@
   </dialog>
 
   <!-- ADICIONAR FAVORITOS POR BUSCA -->
-  <dialog id="pick-dialog">
+  <dialog id="pick-dialog" aria-labelledby="pick-title">
     <div class="sheet-head">
       <span class="spacer"></span>
-      <h3>Adicionar favoritos</h3>
+      <h3 id="pick-title">Adicionar favoritos</h3>
       <button type="button" id="pick-done" class="txt strong">Concluído</button>
     </div>
     <label class="pick-search">
@@ -61,10 +61,10 @@
   </dialog>
 
   <!-- ADICIONAR FONTE DE NOTÍCIAS POR BUSCA -->
-  <dialog id="src-dialog" class="pick-dialog">
+  <dialog id="src-dialog" class="pick-dialog" aria-labelledby="src-title">
     <div class="sheet-head">
       <span class="spacer"></span>
-      <h3>Adicionar fonte</h3>
+      <h3 id="src-title">Adicionar fonte</h3>
       <button type="button" id="src-done" class="txt strong">Concluído</button>
     </div>
     <label class="pick-search">
@@ -76,10 +76,10 @@
   </dialog>
 
   <!-- ADICIONAR ATIVOS DO MERCADO -->
-  <dialog id="asset-dialog" class="pick-dialog">
+  <dialog id="asset-dialog" class="pick-dialog" aria-labelledby="asset-title">
     <div class="sheet-head">
       <span class="spacer"></span>
-      <h3>Adicionar ativos</h3>
+      <h3 id="asset-title">Adicionar ativos</h3>
       <button type="button" id="asset-done" class="txt strong">Concluído</button>
     </div>
     <label class="pick-search">

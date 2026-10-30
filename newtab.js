@@ -133,7 +133,9 @@ const currentEngine = s => eng([s.engines[+s.current], ...s.engines].find(en => 
 // parece um endereço (exemplo.com, localhost:3000, 192.168.0.1) e não uma busca?
 const looksLikeAddress = q => !/\s/.test(q) && (
   /^(localhost|\d{1,3}(\.\d{1,3}){3})(:\d+)?(\/\S*)?$/i.test(q) ||
-  /^[\w-]+(\.[\w-]+)*\.[a-z][a-z0-9-]+(:\d+)?(\/\S*)?$/i.test(q));
+  /^[\w-]+(\.[\w-]+)*\.[a-z][a-z0-9-]+(:\d+)?(\/\S*)?$/i.test(q) &&
+  // sem porta nem caminho, "node.js" ou "package.json" é nome de arquivo: vira busca
+  !/^[^:/]*\.(js|json|html?|css|txt|md|ya?ml|tsx?|jsx|py|exe|zip|pdf)$/i.test(q));
 const addressUrl = q => (/^(localhost|\d)/i.test(q) ? 'http://' : 'https://') + q;
 // já tem esquema (https://, mailto:, ...)?
 const hasScheme = url => /^([a-z][\w+.-]*:\/\/|mailto:|data:|javascript:)/i.test(url);
@@ -178,10 +180,12 @@ const h = (tag, attrs = {}, ...kids) => {
   return el;
 };
 
+// copia o que vem de "base" (os DEFAULTS): sem isso o cfg dividia objetos com eles,
+// mexer no cfg mudava os DEFAULTS e "Restaurar padrão" trazia as mudanças de volta
 function merge(base, over) {
-  if (Array.isArray(base)) return Array.isArray(over) ? over : base;
+  if (Array.isArray(base)) return Array.isArray(over) ? over : structuredClone(base);
   if (base && typeof base === 'object') {
-    const out = { ...base };
+    const out = structuredClone(base);
     for (const k in over || {}) out[k] = k in base ? merge(base[k], over[k]) : over[k];
     return out;
   }
@@ -244,18 +248,24 @@ async function applyTheme() {
 
 let bgChosen = null; // mantém a mesma imagem durante a sessão da aba
 let bgApplied = '';
+// imagens enviadas (podem ser vários MB): lidas uma vez e atualizadas onde são gravadas e quando
+// outra aba muda 'images'; antes eram relidas a cada quadro de qualquer controle do tema
+let bgImages = null, bgSeq = 0;
 async function applyBackground() {
-  const b = cfg.bg, bg = $('#bg');
+  const b = cfg.bg, bg = $('#bg'), my = ++bgSeq;
   bg.style.filter = b.blurPx ? `blur(${b.blurPx}px)` : '';
   $('#dim').style.background = `rgba(0,0,0,${b.dim / 100})`;
-  const paint = css => { if (css !== bgApplied) { bg.style.background = css; bgApplied = css; } };
+  // só a chamada mais recente pinta (a leitura das imagens demorando não pinta por cima do Gradiente)
+  const paint = css => { if (my === bgSeq && css !== bgApplied) { bg.style.background = css; bgApplied = css; } };
 
   if (b.type === 'solid') paint(b.color);
   else if (b.type === 'gradient') {
     const stops = [b.g1, b.g2, b.g3].filter(Boolean).join(', ');
     paint(`linear-gradient(${b.angle}deg, ${stops})`);
   } else if (b.type === 'image') {
-    const uploaded = (await store.get('images')) || [];
+    if (!bgImages) { const v = (await store.get('images')) || []; bgImages ??= v; } // gravado durante a leitura vale mais
+    if (my !== bgSeq) return;
+    const uploaded = bgImages;
     const urls = b.imageUrls.split('\n').map(s => s.trim()).filter(Boolean);
     const pool = [...uploaded, ...urls];
     if (!pool.length) { paint(b.color); return; }
@@ -311,7 +321,8 @@ const renderers = {
     };
     tick();
     clearInterval(renderers._clockTimer);
-    renderers._clockTimer = setInterval(tick, 1000);
+    // bloco desligado: o relógio saiu da página e o intervalo para sozinho
+    const id = renderers._clockTimer = setInterval(() => { if (!wrap.isConnected) return clearInterval(id); tick(); }, 1000);
     wrap.append(time);
     if (cfg.clock.showDate) wrap.append(date);
     return wrap;
@@ -329,7 +340,10 @@ const renderers = {
     const el = h('div', { class: 'greeting' }, compose());
     // a guia pode ficar aberta por horas: atualiza "bom dia/boa tarde" sozinha
     clearInterval(renderers._greetTimer);
-    renderers._greetTimer = setInterval(() => { const t = compose(); if (el.textContent !== t) el.textContent = t; }, 60000);
+    const id = renderers._greetTimer = setInterval(() => {
+      if (!el.isConnected) return clearInterval(id);
+      const t = compose(); if (el.textContent !== t) el.textContent = t;
+    }, 60000);
     return el;
   },
 
@@ -344,7 +358,7 @@ const renderers = {
       if (/^[a-z][\w+.-]*:\/\//i.test(q)) url = q;
       else if (looksLikeAddress(q)) url = addressUrl(q);
       else url = currentEngine(s).url.replace('%s', encodeURIComponent(q));
-      if (s.newTab) window.open(url, '_blank'); else location.href = url;
+      if (s.newTab) window.open(url, '_blank', 'noopener'); else location.href = url;
     } }, svgIcon(), input);
     const enabled = s.engines.map((en, i) => [eng(en), i]).filter(([en]) => usable(en));
     if (s.showPicker && enabled.length > 1) {
@@ -383,9 +397,9 @@ const renderers = {
         tile.append(img);
       } else tile.textContent = (sc.name || '?')[0].toUpperCase();
 
-      const a = h('a', { class: 'sc', href: sc.url, draggable: 'true' }, tile, h('span', {}, sc.name));
+      const a = h('a', { class: 'sc', href: sc.url, draggable: 'true', 'aria-label': sc.name || null }, tile, h('span', {}, sc.name));
       a.addEventListener('dragstart', () => { dragFrom = i; a.classList.add('dragging'); });
-      a.addEventListener('dragend', () => a.classList.remove('dragging'));
+      a.addEventListener('dragend', () => { dragFrom = null; a.classList.remove('dragging'); });
       a.addEventListener('dragover', e => e.preventDefault());
       a.addEventListener('drop', e => {
         e.preventDefault();
@@ -418,9 +432,9 @@ const renderers = {
     // mexer numa tarefa só mexe nela (antes a página inteira era redesenhada a cada clique)
     const ul = h('ul', { class: 'todo-list' });
     const item = (t, fresh) => {
-      const cb = h('input', { type: 'checkbox', checked: t.done, onchange: () => { t.done = cb.checked; li.classList.toggle('done', t.done); save(); } });
+      const cb = h('input', { type: 'checkbox', checked: t.done, 'aria-label': t.text, onchange: () => { t.done = cb.checked; li.classList.toggle('done', t.done); save(); } });
       const li = h('li', { class: (t.done ? 'done' : '') + (fresh ? ' fresh' : '') }, cb, h('span', {}, t.text),
-        h('button', { title: 'Remover', onclick: () => {
+        h('button', { title: 'Remover', 'aria-label': 'Remover', onclick: () => {
           const i = cfg.todos.indexOf(t);
           if (i >= 0) cfg.todos.splice(i, 1);
           save();
@@ -491,6 +505,8 @@ function ensureLayout(saved) {
 // retângulos dos blocos ligados (cópias)
 const onItems = () => Object.fromEntries(cfg.blocks.filter(b => b.on && cfg.layout.items[b.id]).map(b => [b.id, { ...cfg.layout.items[b.id] }]));
 function placeCell(cell, r) {
+  // célula de um bloco desligado por outra aba durante a edição: fica onde está até o "Pronto"
+  if (!r) return;
   cell.style.gridArea = `${r.y + 1} / ${r.x + 1} / span ${r.h} / span ${r.w}`;
   cell.style.setProperty('--rows', r.h);
   cell.style.order = r.y * GRID_COLS + r.x; // janela estreita: uma coluna, na ordem da grade
@@ -572,6 +588,8 @@ function fitToScreen() {
     const k = most(level);
     if (!best || k > best.k) best = { level, k };
   }
+  // nem uma coube em nível nenhum: a notícia forçada vai no mais compacto (menos cortada)
+  if (!best.k) best.level = 5;
   card.dataset.fit = best.level;
   let k = Math.max(1, best.k);
   show(k);
@@ -791,7 +809,9 @@ function editShortcut(i) {
     if (dlg.returnValue === 'ok') {
       let url = f.url.value.trim();
       if (!hasScheme(url)) url = (looksLikeAddress(url) ? addressUrl(url) : 'https://' + url);
-      const item = { name: f.name.value.trim(), url, icon: f.icon.value.trim() || savedIcon };
+      // ícone baixado é do site antigo: só fica se o endereço continuar no mesmo site
+      const keep = savedIcon && bareHost(url) === bareHost(sc.url) ? savedIcon : '';
+      const item = { name: f.name.value.trim(), url, icon: f.icon.value.trim() || keep };
       if (i >= 0) cfg.shortcuts[i] = item; else cfg.shortcuts.push(item);
       save(); render();
     }
@@ -965,7 +985,8 @@ function openPicker() {
   q.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); list.querySelector('.pick-row:not(.added)')?.click(); } };
   $('#pick-done').onclick = () => dlg.close();
   $('#pick-manual').onclick = () => { dlg.close(); editShortcut(-1); };
-  dlg.onclose = () => syncPanel('atalhos');
+  // busca ainda em andamento não pinta a lista da próxima abertura
+  dlg.onclose = () => { token++; clearTimeout(timer); syncPanel('atalhos'); };
   show();
   dlg.showModal();
   q.focus();
@@ -1042,11 +1063,15 @@ function biasOf(src) {
 }
 
 // permissão por domínio (inclui subdomínios: o feed da Folha fica em feeds.folha.uol.com.br)
-const baseDomain = host => host.split('.').slice(/\.(com|org|net|gov|edu|co|blog|art|jus|leg)\.[a-z]{2}$/.test(host) ? -3 : -2).join('.');
+// IP e nome sem ponto (localhost) ficam como estão; em hospedagens compartilhadas (github.io…) cada site é de um dono
+const baseDomain = host => /^[\d.]+$|^\[|^[^.]*$/.test(host) ? host : host.split('.')
+  .slice(/\.(com|org|net|gov|edu|co|blog|art|jus|leg)\.[a-z]{2}$|\.(github\.io|blogspot\.com|substack\.com|wordpress\.com|netlify\.app|pages\.dev)$/.test(host) ? -3 : -2).join('.');
 // esquemas separados: o navegador recusa "*://" se o manifesto só listar https e http um a um
 const originsFor = url => {
   const b = baseDomain(urlHost(url));
-  return b ? ['https', 'http'].flatMap(s => [`${s}://${b}/*`, `${s}://*.${b}/*`]) : [];
+  // IP ou nome sem ponto (ex.: servidor da rede local) não tem subdomínio: "*.192.168.1.5" seria inválido
+  const sub = b && b.includes('.') && !/^[\d.]+$|^\[/.test(b);
+  return b ? ['https', 'http'].flatMap(s => sub ? [`${s}://${b}/*`, `${s}://*.${b}/*`] : [`${s}://${b}/*`]) : [];
 };
 // chame direto no clique (o navegador só mostra o pedido durante uma ação sua)
 function askPermission(urls) {
@@ -1059,7 +1084,8 @@ function askPermission(urls) {
 // aviso rápido no canto do painel
 function toast(text) {
   const t = h('div', { class: 'toast', role: 'status' }, text);
-  ($('#panel').hidden ? document.body : $('#panel')).append(t);
+  // com um <dialog> modal aberto, o resto da página fica inerte e atrás do fundo dele
+  ($('dialog[open]') || ($('#panel').hidden ? document.body : $('#panel'))).append(t);
   setTimeout(() => t.classList.add('out'), 3500);
   setTimeout(() => t.remove(), 4000);
 }
@@ -1220,7 +1246,7 @@ async function ogImage(url) {
     ctl.abort();
     const u = (parseHtml(html).querySelector('meta[property="og:image"], meta[name="og:image"], meta[name="twitter:image"], meta[property="twitter:image"]') || {}).content || '';
     return u ? httpUrl(new URL(u.trim(), url).href) : '';
-  } catch { return ''; } finally { clearTimeout(t); }
+  } catch { return null; } finally { clearTimeout(t); } // null = falha passageira (rede, tempo): tenta de novo depois
 }
 
 // a mesma imagem em várias notícias da mesma fonte é a capa padrão do site (logotipo), não foto da notícia
@@ -1233,7 +1259,7 @@ function dropLogos(items) {
 async function fillPhotos(data) {
   const need = data.items.filter(it => !it.image && !it.ogTried);
   if (!need.length) return;
-  await Promise.all(need.map(async it => { it.image = await ogImage(it.link); it.ogTried = true; }));
+  await Promise.all(need.map(async it => { const u = await ogImage(it.link); if (u !== null) Object.assign(it, { image: u, ogTried: true }); }));
   dropLogos(data.items);
   if (((await store.get('news')) || {}).at !== data.at) return; // já veio uma atualização mais nova
   await store.set('news', data);
@@ -1315,7 +1341,7 @@ async function iconToData(urls, site) {
       return await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(b); });
     } catch {}
   }
-  return iconData(site); // reserva: serviço de ícones do DuckDuckGo
+  return cfg.pickWeb ? iconData(site) : ''; // reserva: serviço de ícones do DuckDuckGo, só com a busca na web ligada
 }
 // completa nome e ícone de uma fonte sua (ao adicionar e para as antigas que ficaram sem)
 async function completeSource(c) {
@@ -1344,15 +1370,21 @@ async function repairSources() {
 // ---------- Sites sem RSS: lê a página e acha os "cartões" de notícia ----------
 // Procura títulos (h1–h5) e sobe até o bloco que tem o link; o tipo de bloco que mais se repete
 // na página é a lista de notícias. De cada bloco tira link, foto, resumo e data.
-const MONTHS = { jan: 0, fev: 1, feb: 1, mar: 2, abr: 3, apr: 3, mai: 4, may: 4, jun: 5, jul: 6, ago: 7, aug: 7, set: 8, sep: 8, out: 9, oct: 9, nov: 10, dez: 11, dec: 11 };
+const MONTHS = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
+  'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+const noonOf = (y, mo, d) => Math.min(Date.now(), new Date(y, mo, d, 12).getTime()); // só a data: meio-dia, nunca no futuro
 function looseDate(s) {
   if (!s) return 0;
-  let m = s.match(/\d{4}-\d{2}-\d{2}(T[\d:.]+(Z|[+-]\d{2}:?\d{2})?)?/);
-  if (m) return Date.parse(m[0]) || 0;
+  let m = s.match(/(\d{4})-(\d{2})-(\d{2})(T[\d:.]+(Z|[+-]\d{2}:?\d{2})?)?/);
+  // "2026-10-30" sozinho o Date.parse lê como meia-noite UTC (dia anterior no Brasil)
+  if (m) return m[4] ? Date.parse(m[0]) || 0 : noonOf(+m[1], m[2] - 1, +m[3]);
   m = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (m) return Math.min(Date.now(), new Date(+m[3], +m[2] - 1, +m[1], 12).getTime());
-  m = s.toLowerCase().match(/(\d{1,2})\s*(?:de\s+)?([a-zç]{3})[a-zç]*\.?\s*(?:de\s+)?(\d{4})/);
-  if (m && m[2] in MONTHS) return Math.min(Date.now(), new Date(+m[3], MONTHS[m[2]], +m[1], 12).getTime()); // só a data: meio-dia, nunca no futuro
+  if (m) return noonOf(+m[3], m[2] - 1, +m[1]);
+  // a palavra precisa ser o começo de um mês ("mai", "maio"), não "maiores" nem "marcas"
+  for (const [, d, w, y] of s.toLowerCase().matchAll(/(\d{1,2})\s*(?:de\s+)?([a-zç]{3,})\.?\s*(?:de\s+)?(\d{4})/g)) {
+    const i = MONTHS.findIndex(n => n.startsWith(w));
+    if (i >= 0) return noonOf(+y, i % 12, +d);
+  }
   return 0;
 }
 // títulos colados com o resumo pelo próprio site ("…Europe's InactionThe war in Ukraine…"):
@@ -1410,15 +1442,14 @@ const presetIcon = id => `icons/news/${id}.${NEWS_ICON_EXT[id] || 'png'}`;
 // ---------- Tradução automática (inglês → português) ----------
 // Usa o tradutor do próprio navegador quando existir (tudo no aparelho);
 // senão, o serviço gratuito do Google Tradutor. Só o título e o resumo são enviados.
+// promessa guardada: traduções ao mesmo tempo dividem um tradutor só (null = não existe aqui)
 let browserTranslator = null;
 async function translate(text) {
-  try {
-    if (browserTranslator === null && typeof self.Translator !== 'undefined') {
-      const avail = await self.Translator.availability({ sourceLanguage: 'en', targetLanguage: 'pt' });
-      browserTranslator = avail === 'available' ? await self.Translator.create({ sourceLanguage: 'en', targetLanguage: 'pt' }) : false;
-    }
-    if (browserTranslator) return await browserTranslator.translate(text);
-  } catch { browserTranslator = false; }
+  if (typeof self.Translator !== 'undefined') {
+    const opts = { sourceLanguage: 'en', targetLanguage: 'pt' };
+    browserTranslator ??= self.Translator.availability(opts).then(a => a === 'available' ? self.Translator.create(opts) : null).catch(() => null);
+    try { const tr = await browserTranslator; if (tr) return await tr.translate(text); } catch {} // falhou só esta: vai pelo Google
+  }
   const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 8000);
   try {
     const r = await net('https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=pt&dt=t&q=' + encodeURIComponent(text), { signal: ctl.signal, credentials: 'omit' });
@@ -1429,9 +1460,9 @@ async function translate(text) {
 // traduz título + resumo dos itens em inglês (os mais recentes), em pequenos lotes
 async function translateItems(items, cache) {
   const old = new Map((cache.items || []).filter(i => i.tr).map(i => [i.link, i]));
-  const todo = items.filter(i => i.en && !i.tr).slice(0, 40);
+  const todo = items.filter(i => i.en && !i.tr);
   for (const it of todo) { const prev = old.get(it.link); if (prev) Object.assign(it, { title: prev.title, summary: prev.summary, orig: prev.orig, tr: true }); }
-  const pend = todo.filter(i => !i.tr);
+  const pend = todo.filter(i => !i.tr).slice(0, 40); // o limite vale só para o que vai à rede; o que já foi traduzido volta todo
   for (let i = 0; i < pend.length; i += 4) {
     await Promise.all(pend.slice(i, i + 4).map(async it => {
       try {
@@ -1475,7 +1506,8 @@ async function loadNews(force) {
   if (cache.v !== NEWS_V) cache = { key: cache.key, items: cache.items, stale: true };
   const fresh = !cache.stale && cache.key === key && Date.now() - (cache.at || 0) < cfg.news.refresh * 6e4;
   if (!srcs.length || (!force && fresh)) return cache.key === key ? cache : { key, items: [] };
-  if (newsJob) return newsJob;
+  // busca em andamento para outras fontes (ex.: você ligou uma agora): espera ela e busca de novo
+  if (newsJob) return newsJob.key === key ? newsJob : newsJob.catch(() => {}).then(() => loadNews(force));
   newsJob = (async () => {
     // fontes com vários feeds (ex.: seções do Estadão) são lidas juntas; só falha se todos falharem
     const readSource = async s => {
@@ -1489,17 +1521,19 @@ async function loadNews(force) {
     // do Bing Notícias; se nem assim, tenta o feed de novo uma vez (falha passageira de rede)
     const bingFeed = s => ({ ...s, page: false, extra: [], bing: true, url: `https://www.bing.com/news/search?q=site%3a${encodeURIComponent(bareHost(s.site || s.url))}&format=rss&setlang=pt-BR&cc=BR` });
     const res = await Promise.allSettled(srcs.map(s => readSource(s)
-      .catch(() => readSource(bingFeed(s)))
+      .catch(async e => { if (!(await covered(s.url))) throw e; return readSource(bingFeed(s)); }) // sem permissão do site, nada de pedir ao Bing
       .catch(() => new Promise(r => setTimeout(r, 1500)).then(() => readSource(s)))));
     const failed = srcs.filter((s, i) => res[i].status === 'rejected').map(s => s.name);
-    // se ainda falhou, mantém as notícias que essa fonte já tinha
-    const kept = name => cache.key === key ? (cache.items || []).filter(it => it.source === name) : [];
+    // se ainda falhou, mantém as notícias que essa fonte já tinha (pelo nome: ligar outra fonte sem internet não apaga)
+    const kept = name => (cache.items || []).filter(it => it.source === name);
+    // feed só de manchetes (ex.: Hacker News): se mais da metade cairia, aceita as que só não têm resumo nem foto
+    const good = list => { const ok = list.filter(isGoodNews); return ok.length * 2 >= list.length ? ok : list.filter(it => ['', 'só manchete'].includes(junkReason(it))); };
     const seen = new Set();
-    let items = res.flatMap((r, i) => r.status === 'fulfilled' ? r.value.filter(isGoodNews).sort((a, b) => b.date - a.date).slice(0, 15) : kept(srcs[i].name))
+    let items = res.flatMap((r, i) => r.status === 'fulfilled' ? good(r.value).sort((a, b) => b.date - a.date).slice(0, 15) : kept(srcs[i].name))
       .filter(it => !seen.has(it.link) && seen.add(it.link))
       .sort((a, b) => b.date - a.date);
     // se tudo falhou (ex.: sem internet), mantém as notícias que já estavam
-    if (!items.length && cache.key === key) items = cache.items || [];
+    if (!items.length) items = (cache.items || []).filter(it => srcs.some(s => s.name === it.source));
     // notícia sem foto no feed: a capa que já foi buscada na página dela vem do cache (as que faltam, em fillPhotos)
     dropLogos(items);
     const prev = new Map((cache.items || []).map(it => [it.link, it]));
@@ -1508,11 +1542,13 @@ async function loadNews(force) {
     // sem limite geral: cortar as N mais recentes de todas as fontes apagava as fontes mais lentas
     // (ex.: Visão Libertária, que só informa a data). Cada fonte já entra com no máximo 15.
     if (cfg.news.translate) await translateItems(items, cache.stale ? {} : cache);
-    const data = { v: NEWS_V, key, at: Date.now(), items, failed };
+    // tudo falhou: at 0 para tentar de novo na próxima atualização, não só depois do intervalo
+    const data = { v: NEWS_V, key, at: failed.length === srcs.length ? 0 : Date.now(), items, failed };
     await store.set('news', data);
     if (cfg.news.images) fillPhotos(data);
     return data;
   })().finally(() => { newsJob = null; });
+  newsJob.key = key;
   return newsJob;
 }
 
@@ -1646,7 +1682,8 @@ function calmSentence(text) {
   if (letters.length < 8) return text;
   // trecho gritado dentro de frase normal ("…no Instagram: "A TRAMA EXPOSTA EM SEUS DETALHES""):
   // 4 ou mais palavras seguidas em maiúsculas viram minúsculas (siglas ficam)
-  if (upper / letters.length < .8) return text.replace(/(?:\b[\p{Lu}\d]{2,}\b[\s,;:"“”'?!-]*){4,}/gu,
+  // (limites com lookaround: \b só conhece ASCII e partiria "JOSÉ", "AÇÃO")
+  if (upper / letters.length < .8) return text.replace(/(?:(?<![\p{L}\d])[\p{Lu}\d]{2,}(?![\p{L}\d])[\s,;:"“”'?!-]*){4,}/gu,
     run => run.replace(/[\p{Lu}\d]+/gu, w => KEEP_CAPS.has(w) ? w : w.toLocaleLowerCase('pt-BR')));
   const out = text.toLocaleLowerCase('pt-BR')
     .replace(/^(\s*["“'(]?\s*)(\p{L})/u, (m, pre, ch) => pre + ch.toLocaleUpperCase('pt-BR'));
@@ -1713,6 +1750,8 @@ const closePop = p => {
 const closePopSoon = () => { clearTimeout(popTimer); popTimer = setTimeout(() => closePop($('.news-pop:not(.closing)')), 500); };
 function sameStoryPop(anchor, group, orig, biasBy, iconBy) {
   clearTimeout(popTimer);
+  // o card foi redesenhado durante a espera: a âncora solta abriria a pilha em (0,0)
+  if (!anchor.isConnected) return;
   const old = $('.news-pop:not(.closing)');
   if (old && old.owner === anchor) return;
   document.querySelectorAll('.news-pop').forEach(closePop); // a pilha anterior fecha com animação, sempre
@@ -1820,7 +1859,8 @@ function topicsOf(it) {
   if (topicMemo.has(it)) return topicMemo.get(it);
   let path = '';
   try { path = fold(decodeURIComponent(new URL(it.link).pathname)); } catch {}
-  const cats = fold((it.cats || []).join(' | ')), title = fold(it.orig ? it.orig.title : it.title);
+  // título mostrado (traduzido) e o original: as palavras podem estar em qualquer um dos dois
+  const cats = fold((it.cats || []).join(' | ')), title = fold(it.title + ' ' + (it.orig ? it.orig.title : ''));
   const keys = Object.keys(TOPICS);
   let found = keys.filter(k => TOPICS[k].path.test(path) || TOPICS[k].cat.test(cats));
   found = [...new Set([...found, ...keys.filter(k => (TOPICS[k].strong || !found.length) && TOPICS[k].title.test(title))])];
@@ -1833,7 +1873,7 @@ function hiddenWhy(it) {
   const t = topicsOf(it).find(k => off[k]);
   if (t) return TOPICS[t].name;
   // palavra inteira: bloquear "ia" não esconde "dia" nem "Bahia"
-  const title = ' ' + fold(it.orig ? it.orig.title : it.title).replace(/[^\p{L}\p{N}-]+/gu, ' ') + ' ';
+  const title = ' ' + fold(it.title + ' ' + (it.orig ? it.orig.title : '')).replace(/[^\p{L}\p{N}-]+/gu, ' ') + ' ';
   const w = (n.muteWords || '').split(/[,\n]/).map(s => fold(s).trim()).filter(Boolean)
     .find(w => title.includes(' ' + w.replace(/[^\p{L}\p{N}-]+/gu, ' ') + ' '));
   return w ? `"${w}"` : '';
@@ -1934,7 +1974,9 @@ function paintNews(card, data) {
   }
   if (newsSwitch && body) {
     newsSwitch = false;
-    body.classList.add('switching');
+    // a classe sai quando a entrada termina: senão cada novo encaixe (fitToScreen esconde e mostra
+    // notícias) repetia a animação nas que voltam a aparecer
+    replay(body, 'switching', 800);
     [...body.children].forEach((el, i) => el.style.setProperty('--i', i));
   }
   const failed = data.failed && data.failed.length ? h('span', {}, 'Não carregou: ' + data.failed.join(', ')) : null;
@@ -1950,8 +1992,11 @@ async function fillNews(card, force, quiet) {
   const srcs = newsSources();
   if (!srcs.length) return paintNews(card, null);
   const key = newsKey(srcs), cache = (await store.get('news')) || {};
+  // mesmo teste de "ainda vale" do loadNews
+  const fresh = !cache.stale && cache.v === NEWS_V && cache.key === key && Date.now() - (cache.at || 0) < cfg.news.refresh * 6e4;
   // atualização automática: se ainda está dentro do tempo escolhido, não mexe em nada na tela
-  if (quiet && cache.v === NEWS_V && cache.key === key && Date.now() - (cache.at || 0) < cfg.news.refresh * 6e4) return;
+  if (quiet && fresh) return;
+  if (!force && fresh) return paintNews(card, cache); // desenha uma vez só (cada desenho agrupa as notícias, e isso pesa)
   const shown = cache.key === key ? cache : { items: [] };
   paintNews(card, { ...shown, loading: true });
   let data = shown;
@@ -1974,8 +2019,8 @@ function biasDots(current, onPick) {
 // configurações das notícias (aparecem em Blocos quando o bloco está ligado)
 function newsSettings() {
   const n = cfg.news;
-  const switchFor = (checked, onChange) => {
-    const sw = h('input', { type: 'checkbox', checked });
+  const switchFor = (checked, onChange, label) => {
+    const sw = h('input', { type: 'checkbox', checked, 'aria-label': label || null });
     sw.addEventListener('change', () => onChange(sw));
     return h('label', { class: 'switch' }, sw, h('span', { class: 'knob' }));
   };
@@ -2024,7 +2069,7 @@ function newsSettings() {
       switchFor(s.on, sw => {
         const done = ok => { if (!ok) { sw.checked = false; return; } s.setOn(sw.checked); changed(); refresh(); };
         if (sw.checked) askPermission(s.perms).then(done); else done(true);
-      })), s.name, bareHost(s.site), BIAS[s.bias] ? BIAS[s.bias].label : '', s.cat);
+      }, s.name)), s.name, bareHost(s.site), BIAS[s.bias] ? BIAS[s.bias].label : '', s.cat);
     row.addEventListener('dragstart', e => { e.dataTransfer.setData('text/x-news-src', s.key); e.dataTransfer.effectAllowed = 'move'; row.classList.add('dragging'); });
     row.addEventListener('dragend', () => row.classList.remove('dragging'));
     if (openKey !== s.key) return row;
@@ -2111,7 +2156,7 @@ function newsSettings() {
 // ---------- Adicionar fonte: busca por nome, como na janela de favoritos ----------
 function openSourcePicker() {
   const dlg = $('#src-dialog'), q = $('#src-q'), list = $('#src-list'), caption = $('#src-caption');
-  const n = cfg.news;
+  // cfg.news lido a cada uso: a sincronização entre guias troca o cfg com o diálogo aberto
   let token = 0, timer;
 
   // uma linha de resultado; "action" é chamada no toque (o pedido de permissão precisa nascer do toque)
@@ -2131,25 +2176,25 @@ function openSourcePicker() {
     r.addEventListener('click', () => {
       if (r.classList.contains('busy')) return;
       if (it.preset) {
-        if (n.enabled[it.preset]) { n.enabled[it.preset] = false; changed(); paint('off'); return; }
-        askPermission([it.feed, it.site]).then(ok => { if (ok) { n.enabled[it.preset] = true; changed(); paint('on'); } });
+        if (cfg.news.enabled[it.preset]) { cfg.news.enabled[it.preset] = false; changed(); paint('off'); return; }
+        askPermission([it.feed, it.site]).then(ok => { if (ok) { cfg.news.enabled[it.preset] = true; changed(); paint('on'); } });
         return;
       }
-      if (it.on()) { const i = n.custom.findIndex(c => bareHost(c.site || c.url) === bareHost(it.site)); if (i >= 0) n.custom.splice(i, 1); changed(); paint('off'); return; }
+      if (it.on()) { const i = cfg.news.custom.findIndex(c => bareHost(c.site || c.url) === bareHost(it.site)); if (i >= 0) cfg.news.custom.splice(i, 1); changed(); paint('off'); return; }
       askPermission([pending || it.site]).then(async ok => {
         if (!ok) return;
         paint('busy', 'Procurando o feed…');
         try {
           let found;
           if (pending) { const fi = feedInfo(await fetchText(pending)); if (!fi) throw 0; found = { feed: pending, title: fi.title }; }
-          else found = await discoverFeed(it.site);
+          else found = await discoverFeed(it.url || it.site);
           if (found.needs) { pending = found.needs; paint('allow', 'Toque de novo para permitir ' + urlHost(found.needs)); return; }
-          if (!n.custom.some(c => c.url === found.feed)) {
+          if (!cfg.news.custom.some(c => c.url === found.feed)) {
             // nome: o do Wikidata quando veio da busca; se você digitou o endereço, o nome oficial do site
             const c = { name: it.auto ? (found.title || it.name) : it.name, autoName: !!it.auto, url: found.feed, site: it.site, on: true, bias: null, page: !!found.page };
             paint('busy', 'Pegando nome e ícone…');
             await completeSource(c);
-            n.custom.push(c);
+            cfg.news.custom.push(c);
           }
           changed(); paint('on');
         } catch { pending = null; paint('off', 'Não achei uma lista de notícias nesse site'); }
@@ -2159,15 +2204,17 @@ function openSourcePicker() {
   }
 
   const presetItem = ([id, p]) => ({ preset: id, name: p.name, site: p.site, feed: p.url, icon: presetIcon(id),
-    sub: bareHost(p.site) + ' · ' + (biasOf({ id }) != null ? BIAS[biasOf({ id })].label : p.cat), on: () => !!n.enabled[id] });
+    sub: bareHost(p.site) + ' · ' + (biasOf({ id }) != null ? BIAS[biasOf({ id })].label : p.cat), on: () => !!cfg.news.enabled[id] });
   const webItem = (url, name, kind) => ({ name, auto: kind !== 'web', site: new URL(url).origin, icon: cfg.pickWeb ? remoteIcon(url) : '',
-    sub: bareHost(url) + ' · ' + kind, on: () => n.custom.some(c => bareHost(c.site || c.url) === bareHost(url)) });
+    sub: bareHost(url) + ' · ' + kind, on: () => cfg.news.custom.some(c => bareHost(c.site || c.url) === bareHost(url)) });
 
   async function show() {
     const my = ++token, text = q.value.trim(), term = text.toLowerCase();
     const presets = Object.entries(NEWS_PRESETS).filter(([, p]) => !term || p.name.toLowerCase().includes(term) || bareHost(p.site).includes(term));
     const items = presets.slice(0, term ? 20 : 40).map(presetItem);
-    if (looksLikeAddress(text) && !presets.length) items.unshift(webItem(addressUrl(text), prettyHost(addressUrl(text)), 'endereço digitado'));
+    // endereço colado inteiro (https://site/rss/...) também vale; o caminho vai junto para achar o feed
+    const typed = /^https?:\/\/\S+$/i.test(text) && URL.canParse(text) ? text : looksLikeAddress(text) ? addressUrl(text) : '';
+    if (typed && !presets.length) items.unshift({ ...webItem(typed, prettyHost(typed), 'endereço digitado'), url: typed });
     let failed = false;
     const paintAll = (loading, web) => {
       caption.textContent = !term ? 'Fontes prontas' : loading ? 'Buscando na web…' : (items.length + web.length) ? 'Resultados'
@@ -2175,8 +2222,8 @@ function openSourcePicker() {
       list.hidden = !(items.length + web.length);
       list.replaceChildren(...items.map(row), ...web.map(row));
     };
-    paintAll(term.length >= 2, []);
-    if (term.length < 2) return;
+    paintAll(term.length >= 2 && cfg.pickWeb, []);
+    if (term.length < 2 || !cfg.pickWeb) return;
     let res = [];
     try { res = await webSites(text); } catch { failed = true; }
     if (my !== token) return;
@@ -2268,8 +2315,7 @@ async function quoteCoinGecko(sym, range) {
   }
   const pts = (j.prices || []).map(p => p[1]);
   if (!pts.length) throw new Error('sem dados');
-  const step = Math.max(1, Math.floor(pts.length / 120));
-  return { price: pts[pts.length - 1], base: pts[0], currency: vs, name: coin, points: pts.filter((_, i) => i % step === 0), at: Date.now() };
+  return { price: pts[pts.length - 1], base: pts[0], currency: vs, name: coin, points: sparkPoints(pts, 120), at: Date.now() };
 }
 // moedas: AwesomeAPI (brasileira, gratuita) — reserva quando o Yahoo não responder; sem gráfico
 async function quoteAwesome(sym) {
@@ -2318,21 +2364,25 @@ async function sparkBatch(symbols, range = '1d') {
   }
   return out;
 }
+// @top:X e @bottom:X usam a mesma lista: um pedido só por região|período em cada carga (zerado no loadMarket)
+let moverSpark = {};
 async function quoteMover(code, range = '1d') {
   const [kind, region] = code.slice(1).split(':'), top = kind === 'top';
-  let pick;
+  let pick, pct;
   if (region === 'US' && range === '1d') {
     // EUA: lista pronta do Yahoo com o mercado inteiro
     const j = await getJson(`${YF}/v1/finance/screener/predefined/saved?scrIds=${top ? 'day_gainers' : 'day_losers'}&count=1&lang=pt-BR`);
     const q = j.finance.result[0].quotes[0];
     pick = q.symbol;
   } else {
-    const ch = await sparkBatch(MOVER_BASKETS[region], range);
+    const ch = await (moverSpark[region + '|' + range] ||= sparkBatch(MOVER_BASKETS[region], range));
     const list = Object.entries(ch).sort((a, b) => top ? b[1] - a[1] : a[1] - b[1]);
     if (!list.length) throw new Error('sem dados');
-    pick = list[0][0];
+    [pick, pct] = list[0];
   }
   const q = await quoteYahoo(pick, range);
+  // mostra a mesma variação que escolheu o destaque (fora do Dia, a base do gráfico é outra e a "maior alta" podia sair com ▼)
+  if (pct != null) q.base = q.price / (1 + pct / 100);
   return { ...q, sym: pick, range, label: pick.replace(/\.(SA|BA|MX)$/, '').replace(/-USD$/, '') + ' · ' + q.name };
 }
 async function quoteBcb(code) {
@@ -2394,23 +2444,28 @@ async function quoteYahoo(sym, range) {
         if (last24.length >= 2) closes = last24;
       } catch {}
     }
-    return { price, base, currency: m.currency || '', name: (m.shortName || m.longName || sym).replace(/\s{2,}.*/, '').trim(), points: closes.slice(-120), at: Date.now() };
+    // reduz sem cortar: o gráfico cobre o mesmo período da variação
+    return { price, base, currency: m.currency || '', name: (m.shortName || m.longName || sym).replace(/\s{2,}.*/, '').trim(), points: sparkPoints(closes, 120), at: Date.now() };
   }
 }
 
-let marketJob = null;
+let marketJob = null, marketJobKey = '';
 async function loadMarket(force) {
-  const mk = cfg.market, syms = mk.symbols.map(x => x.s), key = syms.join('|') + '@' + mk.range;
+  // período e lista fixados aqui: se mudarem no meio da carga, não misturam períodos nem gravam na chave errada
+  const mk = cfg.market, range = mk.range, syms = mk.symbols.map(x => x.s), key = syms.join('|') + '@' + range;
   const cache = (await store.get('market')) || {};
   // guardado e recente — a não ser que algum ativo tenha ficado sem cotação ou sem gráfico
   const complete = syms.every(s => cache.data && cache.data[s] && (cache.data[s].points || []).length >= 2);
   const age = Date.now() - (cache.at || 0);
   if (!force && cache.key === key && age < mk.refresh * 6e4 && (complete || age < 6e4)) return cache; // incompleto: tenta de novo no máximo 1×/min
-  if (marketJob) return marketJob;
+  // carga de outra chave em andamento: espera ela acabar e carrega a nossa
+  if (marketJob) return marketJobKey === key ? marketJob : marketJob.then(() => loadMarket(force), () => loadMarket(force));
+  marketJobKey = key;
+  moverSpark = {};
   marketJob = (async () => {
-    // o guardado só vale se for do mesmo período (senão um gráfico do Dia apareceria em Ano)
-    const sameRange = String(cache.key || '').endsWith('@' + mk.range);
-    const prev = s => sameRange && cache.data && cache.data[s];
+    // o guardado só vale se for do mesmo período (senão um gráfico do Dia apareceria em Ano); juros e inflação não dependem dele
+    const sameRange = String(cache.key || '').endsWith('@' + range);
+    const prev = s => (sameRange || s.startsWith('@bcb:')) && cache.data && cache.data[s];
     const stillFresh = s => !force && prev(s) && (prev(s).points || []).length >= 2 && Date.now() - (prev(s).at || 0) < mk.refresh * 6e4;
     // em fila, dois por vez: o Yahoo bloqueia por um tempo (erro 429) quem pede muito de uma vez
     const res = new Array(syms.length);
@@ -2419,7 +2474,7 @@ async function loadMarket(force) {
       while (next < syms.length) {
         const i = next++;
         if (stillFresh(syms[i])) { res[i] = { status: 'fulfilled', value: prev(syms[i]) }; continue; }
-        try { res[i] = { status: 'fulfilled', value: await fetchQuote(syms[i], mk.range) }; }
+        try { res[i] = { status: 'fulfilled', value: await fetchQuote(syms[i], range) }; }
         catch (e) { res[i] = { status: 'rejected', reason: e }; }
       }
     }));
@@ -2437,10 +2492,13 @@ const CENTS = { USX: 'USD', GBp: 'GBP', GBX: 'GBP', ZAc: 'ZAR', ILA: 'ILS' };
 const fmtPrice = (v, cur, sym) => {
   if (v == null || isNaN(v)) return '—';
   if (CENTS[cur]) { v /= 100; cur = CENTS[cur]; }
-  const digits = Math.abs(v) >= 1000 ? 0 : Math.abs(v) >= 10 ? 2 : Math.abs(v) >= 1 ? 2 : 4;
-  if (sym.startsWith('^') || !cur) return v.toLocaleString('pt-BR', { maximumFractionDigits: digits });
-  try { return v.toLocaleString('pt-BR', { style: 'currency', currency: cur, minimumFractionDigits: digits, maximumFractionDigits: digits }); }
-  catch { return v.toLocaleString('pt-BR', { maximumFractionDigits: digits }); }
+  // abaixo de 1: 4 algarismos significativos (com 4 casas fixas, SHIB virava "0,0000")
+  const small = Math.abs(v) < 1, digits = Math.abs(v) >= 1000 ? 0 : 2;
+  const loose = small ? { maximumSignificantDigits: 4 } : { maximumFractionDigits: digits };
+  const fixed = small ? { minimumSignificantDigits: 4, maximumSignificantDigits: 4 } : { minimumFractionDigits: digits, maximumFractionDigits: digits };
+  if (sym.startsWith('^') || !cur) return v.toLocaleString('pt-BR', loose);
+  try { return v.toLocaleString('pt-BR', { style: 'currency', currency: cur, ...fixed }); }
+  catch { return v.toLocaleString('pt-BR', loose); }
 };
 // taxas (Selic, CDI, IPCA): variação em pontos percentuais desde a última mudança
 function rateChange(q) {
@@ -2568,7 +2626,8 @@ function paintMarket(card, data) {
     // juros e inflação: a assinatura diz se algo mudou; se não mudou, a linha que já está na tela é mantida
     const sig = isRate(s) ? [s, mk.spark, q ? '' : !!(data && data.loading), q && q.price, q && q.base, q && (q.points || []).length, q && (q.points || []).at(-1)].join('|') : null;
     const kept = sig && [...card.querySelectorAll(':scope > .mk-list > .mk-row.fixed')].find(el => el.dataset.sig === sig);
-    if (kept) return kept;
+    // sem a classe de piscar: reinserida, a linha repetiria o flash de um preço que não mudou
+    if (kept) { kept.classList.remove('tick-up', 'tick-down'); return kept; }
     return h('div', { class: 'mk-row' + (isRate(s) ? ' fixed' : '') + tick, title: s, 'data-sig': sig || undefined },
       h('span', { class: 'mk-badge' }, marketBadge(s)),
       // só o nome, numa linha; nos destaques do período, o código da ação que foi a maior alta/baixa
@@ -2589,7 +2648,7 @@ function paintMarket(card, data) {
     else {
       // a mesma resposta pode pintar o bloco duas vezes seguidas; as duas animam
       setTimeout(() => { marketSwitch = false; }, 120);
-      list.classList.add('switching');
+      replay(list, 'switching', 1400); // sai depois da entrada (linhas + gráfico), pelo mesmo motivo das notícias
       rows.filter(el => !el.matches('.fixed, .mk-sep')).forEach((el, i) => el.style.setProperty('--i', i));
     }
   }
@@ -2606,16 +2665,23 @@ async function fillMarket(card, force, quiet) {
   if (quiet && cache.key === key && complete && Date.now() - (cache.at || 0) < mk.refresh * 6e4) return;
   paintMarket(card, { ...cache, loading: true });
   let data = cache;
-  try { data = await loadMarket(force); } catch {}
+  try {
+    data = await loadMarket(force);
+    // período ou lista mudou enquanto carregava: quem pinta é a chamada mais nova
+    if (data.key !== cfg.market.symbols.map(x => x.s).join('|') + '@' + cfg.market.range) return;
+  } catch {}
   const cur = card.isConnected ? card : $('.card.market');
   if (cur) paintMarket(cur, data);
 }
 // atualiza sozinho enquanto a guia estiver aberta (só busca de novo quando passa do tempo escolhido)
-setInterval(() => {
+const autoRefresh = () => {
   if (document.hidden) return;
   const m = $('.card.market'); if (m) fillMarket(m, false, true);
   const n = $('.card.news'); if (n) fillNews(n, false, true);
-}, 60000);
+};
+setInterval(autoRefresh, 60000);
+// o intervalo pula a guia escondida: ao voltar para ela, confere na hora
+document.addEventListener('visibilitychange', autoRefresh);
 
 // catálogo de ativos por categoria (símbolos do Yahoo Finance; cripto também no CoinGecko)
 const MARKET_CATALOG = {
@@ -2651,6 +2717,7 @@ function openAssetPicker() {
     return r;
   };
   const showCat = () => {
+    clearTimeout(timer); token++; // cancela a busca pendente, senão o resultado atrasado cobre a categoria
     cats.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.textContent === cat));
     list.hidden = false;
     list.replaceChildren(...MARKET_CATALOG[cat].map(([s, name]) => row(s, name, isSpecial(s) ? (s.startsWith('@bcb') ? 'Banco Central' : 'Atualiza a cada consulta') : s.replace(/\.SA$/, '') + ' · ' + marketKind(s, '', name))));
@@ -2685,7 +2752,7 @@ function openAssetPicker() {
     }, 300);
   };
   $('#asset-done').onclick = () => dlg.close();
-  dlg.onclose = () => { syncPanel('blocos'); const c = $('.card.market'); if (c) fillMarket(c, true); };
+  dlg.onclose = () => { syncPanel('blocos'); const c = $('.card.market'); if (c) fillMarket(c); }; // sem forçar: a lista nova já muda a chave e só os ativos novos são baixados
   showCat();
   dlg.showModal();
   q.focus();
@@ -2816,6 +2883,8 @@ function slide(el, open) {
   return a.finished.catch(() => {}).then(() => { if (open) el.style.overflow = ''; });
 }
 
+// nome acessível a partir da legenda (só se for texto)
+const ariaOf = label => typeof label === 'string' && label ? label : null;
 const ui = {
   // legenda pequena + grupo arredondado
   section(title, ...rows) {
@@ -2852,17 +2921,17 @@ const ui = {
       label ? h('span', { class: 'lbl' }, label) : null, control);
   },
   text(ic, label, path, placeholder = '') {
-    const inp = h('input', { type: 'text', class: 'inline', value: get(path), placeholder, spellcheck: 'false' });
+    const inp = h('input', { type: 'text', class: 'inline', value: get(path), placeholder, spellcheck: 'false', 'aria-label': ariaOf(label) });
     inp.addEventListener('input', () => { set(path, inp.value); changed(); });
     return ui.row(ic, label, inp);
   },
   date(ic, label, path) {
-    const inp = h('input', { type: 'date', class: 'inline', value: get(path) });
+    const inp = h('input', { type: 'date', class: 'inline', value: get(path), 'aria-label': ariaOf(label) });
     inp.addEventListener('change', () => { set(path, inp.value); changed(); });
     return ui.row(ic, label, inp);
   },
   toggle(ic, label, path, after, invert) {
-    const inp = h('input', { type: 'checkbox', checked: invert ? !get(path) : get(path) });
+    const inp = h('input', { type: 'checkbox', checked: invert ? !get(path) : get(path), 'aria-label': ariaOf(label) });
     inp.addEventListener('change', () => { set(path, invert ? !inp.checked : inp.checked); changed(); after && after(); });
     return ui.row(ic, label, h('label', { class: 'switch' }, inp, h('span', { class: 'knob' })));
   },
@@ -2870,7 +2939,8 @@ const ui = {
   seg(path, options, after) {
     const wrap = h('div', { class: 'seg' });
     for (const [v, t, ic, tip] of options) {
-      const b = h('button', { type: 'button', class: String(get(path)) === String(v) ? 'on' : '', title: tip || t || '' }, ic ? icon(ic) : null, t);
+      const on = String(get(path)) === String(v);
+      const b = h('button', { type: 'button', class: on ? 'on' : '', 'aria-pressed': String(on), title: tip || t || '' }, ic ? icon(ic) : null, t);
       b.addEventListener('click', () => { set(path, v); changed(); after ? after() : refresh(); });
       wrap.append(b);
     }
@@ -2879,7 +2949,7 @@ const ui = {
   segRow(ic, label, path, options, after) { return ui.row(ic, label, ui.seg(path, options, after)); },
   slider(ic, label, path, min, max, step = 1, unit = '') {
     const out = h('span', { class: 'val' }, get(path) + unit);
-    const inp = h('input', { type: 'range', min, max, step, value: get(path) });
+    const inp = h('input', { type: 'range', min, max, step, value: get(path), 'aria-label': ariaOf(label) });
     const fill = () => inp.style.setProperty('--p', ((inp.value - min) / (max - min) * 100) + '%');
     fill();
     inp.addEventListener('input', () => { set(path, +inp.value); out.textContent = inp.value + unit; fill(); changed(); });
@@ -2888,7 +2958,7 @@ const ui = {
   },
   swatch(path, title, removable) {
     const v = get(path);
-    const inp = h('input', { type: 'color', value: v || '#888888' });
+    const inp = h('input', { type: 'color', value: v || '#888888', 'aria-label': ariaOf(title) });
     inp.addEventListener('input', () => { set(path, inp.value); sw.style.background = inp.value; changed(); });
     const sw = h('label', { class: 'swatch' + (v ? '' : ' empty'), title, style: v ? `background:${v}` : '' }, inp, v ? null : icon('plus'));
     if (!removable || !v) return sw;
@@ -3035,14 +3105,14 @@ const tabs = {
       file.addEventListener('change', async () => {
         const imgs = (await store.get('images')) || [];
         for (const f of file.files) imgs.push(await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(f); }));
-        await store.set('images', imgs); bgChosen = imgs.length - 1; changed(); refresh();
+        await store.set('images', imgs); bgImages = imgs; bgChosen = imgs.length - 1; changed(); refresh();
       });
       const thumbs = h('div', { class: 'thumbs' }, h('button', { type: 'button', class: 'thumb add', title: 'Enviar imagens', onclick: () => file.click() }, icon('plus')), file);
       store.get('images').then(imgs => (imgs || []).forEach((src, i) => thumbs.append(
         h('div', { class: 'thumb' },
           h('img', { src, alt: '', title: 'Usar agora', onclick: () => { bgChosen = i; applyBackground(); } }),
           h('button', { type: 'button', class: 'swatch-x', title: 'Remover', onclick: async () => {
-            imgs.splice(i, 1); await store.set('images', imgs); bgChosen = null; changed(); refresh();
+            imgs.splice(i, 1); await store.set('images', imgs); bgImages = imgs; bgChosen = null; changed(); refresh();
           } }, icon('x'))))));
       list.push(
         ...ui.section('Suas imagens', h('div', { class: 'row-item' }, thumbs)),
@@ -3061,7 +3131,7 @@ const tabs = {
 
   blocos() {
     const rows = cfg.blocks.map(b => {
-      const cb = h('input', { type: 'checkbox', checked: b.on });
+      const cb = h('input', { type: 'checkbox', checked: b.on, 'aria-label': BLOCKS[b.id] });
       cb.addEventListener('change', () => {
         // ligar: volta para onde estava ou vai para o primeiro espaço livre da grade
         if (cb.checked) {
@@ -3177,10 +3247,8 @@ const tabs = {
     file.addEventListener('change', async () => {
       try {
         const data = JSON.parse(await file.files[0].text());
-        cfg = merge(DEFAULTS, data.cfg || data);
-        normalizeEngines(cfg.search);
-        ensureLayout(data.cfg || data); // backup de antes da grade: converte o layout
-        if (Array.isArray(data.images)) await store.set('images', data.images);
+        normalize(data.cfg || data); // mesmas migrações da abertura (backup antigo, de antes da grade etc.)
+        if (Array.isArray(data.images)) { await store.set('images', data.images); bgImages = data.images; }
         await store.set('cfg', cfg); await applyTheme(); render(); refresh();
         alert('Configuração importada.');
       } catch (e) { alert('Arquivo inválido: ' + e.message); }
@@ -3197,7 +3265,7 @@ const tabs = {
       ...ui.section('',
         ui.action('reset', 'Restaurar padrão', async () => {
           if (!confirm('Restaurar tudo para o padrão? Notas, tarefas e imagens serão apagadas.')) return;
-          cfg = structuredClone(DEFAULTS); ensureLayout(); await store.set('cfg', cfg); await store.set('images', []); await store.set('news', {}); await store.set('market', {});
+          cfg = structuredClone(DEFAULTS); ensureLayout(); await store.set('cfg', cfg); await store.set('images', []); bgImages = []; await store.set('news', {}); await store.set('market', {});
           await applyTheme(); render(); refresh();
         }, 'danger')),
       h('div', { class: 'keys' }, h('kbd', {}, '/'), ' busca', h('kbd', {}, ','), ' ajustes', h('kbd', {}, 'E'), ' editar layout', h('kbd', {}, 'Esc'), ' fechar')
@@ -3214,7 +3282,7 @@ function openTab(name) {
   currentTab = name;
   const [, , title] = TABS.find(t => t[0] === name);
   $('#panel-title').textContent = title;
-  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
+  document.querySelectorAll('#tabs button').forEach(b => { const on = b.dataset.tab === name; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
   body.replaceChildren(...tabs[name]().filter(Boolean));
   body.scrollTop = keep;
   // troca de aba: o conteúdo novo entra em sequência (não anima nos redesenhos da mesma aba)
@@ -3257,44 +3325,61 @@ for (const dlg of document.querySelectorAll('dialog')) {
     if (dlg.classList.contains('closing')) return;
     dlg.classList.add('closing');
     let done = false;
-    const finish = () => { if (done) return; done = true; dlg.classList.remove('closing'); realClose(value); };
-    dlg.addEventListener('animationend', finish, { once: true });
+    const finish = () => { if (done) return; done = true; dlg.removeEventListener('animationend', onEnd); dlg.classList.remove('closing'); realClose(value); };
+    // só a animação da própria janela conta (a de um filho terminaria o fechamento antes da hora)
+    const onEnd = e => { if (e.target === dlg) finish(); };
+    dlg.addEventListener('animationend', onEnd);
     setTimeout(finish, 400); // garantia, caso a animação não dispare
   };
   dlg.addEventListener('cancel', e => { e.preventDefault(); dlg.close(); });
 }
 
 // ---------- Inicialização ----------
-(async () => {
-  const saved = (await store.get('cfg')) || {};
+// monta o cfg a partir do que foi guardado (abertura, importação e outra guia), com as migrações
+// de versões antigas. Devolve true se mudou algo que precisa ser salvo
+function normalize(saved) {
+  let dirty = false;
   cfg = merge(DEFAULTS, saved);
   // visual minimalista (v2): atualiza o tema de quem já usava a versão antiga; nome, atalhos e notas ficam
   if (saved.theme && saved.design !== DEFAULTS.design) {
     for (const k of ['card', 'cardOpacity', 'blur', 'radius', 'scSize']) cfg.theme[k] = DEFAULTS.theme[k];
     if (cfg.bg.type === 'gradient') Object.assign(cfg.bg, { g1: DEFAULTS.bg.g1, g2: DEFAULTS.bg.g2, g3: '', angle: DEFAULTS.bg.angle, dim: 0 });
     cfg.design = DEFAULTS.design;
-    save();
+    dirty = true;
   }
   // escala nova de Opacidade e Granulado (0–100% no controle = 0–50% de verdade): dobra os valores
   // guardados uma vez, para o visual de quem já usava não mudar
   if (saved.theme && saved.glassScale !== DEFAULTS.glassScale) {
     for (const k of ['cardOpacity', 'grain']) if (saved.design === DEFAULTS.design && k in saved.theme) cfg.theme[k] = Math.min(100, (+saved.theme[k] || 0) * 2);
     cfg.glassScale = DEFAULTS.glassScale;
-    save();
+    dirty = true;
   }
   // "IPCA 12 meses" virou só "IPCA" (o "12m" ao lado do valor já diz o período)
   for (const x of cfg.market.symbols) if (x.s === '@bcb:13522' && x.name === 'IPCA 12 meses') x.name = 'IPCA';
   // mecanismos: os 6 padrão sempre presentes e protegidos (roda a cada abertura, não perde nada)
   const enginesBefore = JSON.stringify(cfg.search.engines) + cfg.search.current;
   normalizeEngines(cfg.search);
-  if (JSON.stringify(cfg.search.engines) + cfg.search.current !== enginesBefore) save();
+  if (JSON.stringify(cfg.search.engines) + cfg.search.current !== enginesBefore) dirty = true;
   // garante que blocos novos (de versões futuras) apareçam
   for (const id of Object.keys(BLOCKS)) if (!cfg.blocks.some(b => b.id === id)) cfg.blocks.push({ id, on: false });
   // grade (v1.4): quem vem do layout de zonas tem ele convertido uma vez, o mais parecido possível
-  if (ensureLayout(saved)) save();
+  if (ensureLayout(saved)) dirty = true;
+  return dirty;
+}
+
+(async () => {
+  const saved = (await store.get('cfg')) || {};
+  if (normalize(saved)) save();
   await applyTheme();
   render();
   repairSources(); // fontes suas que ficaram sem nome oficial ou sem ícone (em segundo plano)
+  // a guia pode ficar aberta de um dia para o outro: Contagem e Frase do dia mudam à meia-noite
+  let today = dayIndex();
+  setInterval(() => {
+    if (editing || dayIndex() === today) return; // no meio da edição, espera o "Pronto"
+    today = dayIndex();
+    if (cfg.blocks.some(b => b.on && (b.id === 'quote' || b.id === 'countdown'))) render();
+  }, 60000);
 
   $('#open-settings').onclick = () => togglePanel();
   $('#close-settings').onclick = () => togglePanel(false);
@@ -3306,7 +3391,14 @@ for (const dlg of document.querySelectorAll('dialog')) {
     // com uma janela aberta, o Esc fecha só ela (antes fechava o painel junto)
     if (document.querySelector('dialog[open]')) return;
     const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
-    if (e.key === 'Escape') return editing ? stopEditing(true) : togglePanel(false);
+    if (e.key === 'Escape') {
+      if (editing) return stopEditing(true);
+      // o foco estava no painel: volta para a engrenagem (senão cai no <body>)
+      const back = $('#panel').contains(document.activeElement);
+      togglePanel(false);
+      if (back) $('#open-settings').focus();
+      return;
+    }
     if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === '/' && !editing) { e.preventDefault(); $('.search input')?.focus(); }
     if (e.key === ',' && !editing) { e.preventDefault(); togglePanel(); }
@@ -3324,14 +3416,18 @@ for (const dlg of document.querySelectorAll('dialog')) {
   // Com o painel aberto também aceita (antes ignorava, e o próximo ajuste feito aqui gravava por cima
   // das notas escritas na outra guia); o painel é redesenhado para mexer na configuração nova.
   if (hasChrome) chrome.storage.onChanged.addListener((ch, area) => {
+    if (area === 'local' && ch.images) { bgImages = ch.images.newValue || []; applyBackground(); }
     if (area !== 'local' || !ch.cfg || !ch.cfg.newValue || saveTimer) return;
     const incoming = snapshot(ch.cfg.newValue);
     if (lastWritten.includes(incoming) || incoming === snapshot(cfg)) return;
-    const lay = cfg.layout;
-    cfg = merge(DEFAULTS, ch.cfg.newValue); normalizeEngines(cfg.search);
-    // no meio da edição: aceita o resto (ex.: notas de outra aba) e mantém o layout sendo editado
-    if (editing) { cfg.layout = lay; applyTheme(); return; }
-    ensureLayout(ch.cfg.newValue); applyTheme(); render();
+    // no meio da edição: aceita o resto (ex.: notas de outra aba) e mantém o layout sendo editado.
+    // Sem redesenhar (um arrasto em andamento se perderia); célula de bloco desligado lá: ver placeCell
+    if (editing) {
+      const lay = cfg.layout;
+      cfg = merge(DEFAULTS, ch.cfg.newValue); normalizeEngines(cfg.search);
+      cfg.layout = lay; applyTheme(); return;
+    }
+    normalize(ch.cfg.newValue); applyTheme(); render();
     if (!$('#panel').hidden) refresh();
   });
 })();
